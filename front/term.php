@@ -5,10 +5,10 @@ include('../../../inc/includes.php');
 Session::checkLoginUser();
 
 // ── AJAX: verificar hash de documento ────────────────────────────────────────
-if (isset($_GET['action']) && $_GET['action'] === 'verify_hash' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if (isset($_GET['action']) && $_GET['action'] === 'verify_hash') {
     header('Content-Type: application/json');
 
-    $hash = trim($_POST['hash'] ?? '');
+    $hash = trim($_GET['hash'] ?? '');
     if (empty($hash) || !preg_match('/^[a-f0-9]{64}$/i', $hash)) {
         echo json_encode(['valid' => false, 'error' => 'Hash inválido.']);
         exit;
@@ -449,11 +449,7 @@ async function handleVerifyFile(file) {
           + "</div>"
         );
 
-        const fd = new FormData();
-        fd.append("hash", hash);
-        fd.append("_glpi_csrf_token", "' . Session::getNewCSRFToken() . '");
-
-        const resp = await fetch("term.php?action=verify_hash", { method: "POST", body: fd });
+        const resp = await fetch("term.php?action=verify_hash&hash=" + encodeURIComponent(hash));
         const json = await resp.json();
 
         document.getElementById("verifyBtnReset").style.display = "";
