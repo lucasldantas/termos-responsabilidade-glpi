@@ -101,7 +101,7 @@ $usersDetailedJson     = json_encode($usersDetailed,     JSON_UNESCAPED_UNICODE)
 $statesJson            = json_encode($states,            JSON_UNESCAPED_UNICODE);
 ?>
 
-<div class="container-fluid" style="max-width:1000px; margin:30px auto; padding:0 20px;">
+<div class="container-fluid" style="max-width:1400px; margin:30px auto; padding:0 20px;">
     <h2><i class="fas fa-paper-plane"></i> Envio em Lote de Termos</h2>
     <p class="text-muted" style="margin-bottom:20px;">
         Adicione os computadores e responsáveis. Um link de assinatura será enviado por e-mail para cada um.
@@ -140,15 +140,15 @@ $statesJson            = json_encode($states,            JSON_UNESCAPED_UNICODE)
     <form id="form-batch">
         <?= Html::hidden('_glpi_csrf_token', ['value' => Session::getNewCSRFToken()]) ?>
 
-        <div style="background:#fff; border:1px solid #dee2e6; border-radius:6px; overflow:hidden; margin-bottom:15px;">
-            <table class="table table-bordered" style="margin:0;" id="batch-table">
+        <div style="background:#fff; border:1px solid #dee2e6; border-radius:6px; overflow-x:auto; margin-bottom:15px;">
+            <table class="table table-bordered" style="margin:0; min-width:900px;" id="batch-table">
                 <thead style="background:#f8f9fa;">
                     <tr>
-                        <th style="width:30%;">Computador</th>
-                        <th style="width:18%;">Status</th>
-                        <th style="width:24%;">Usuário Responsável</th>
-                        <th style="width:22%;">E-mail</th>
-                        <th style="width:6%;"></th>
+                        <th style="width:28%; min-width:220px;">Computador</th>
+                        <th style="width:16%; min-width:160px;">Status</th>
+                        <th style="width:24%; min-width:200px;">Usuário Responsável</th>
+                        <th style="width:24%; min-width:180px;">E-mail</th>
+                        <th style="width:8%; min-width:50px;"></th>
                     </tr>
                 </thead>
                 <tbody id="batch-body">
