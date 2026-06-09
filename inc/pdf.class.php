@@ -187,6 +187,8 @@ class PluginTermosPdf {
 
         // Coluna esquerda — Equipamento (campos dinâmicos)
         $this->sectionTitle($pdf, $lib, $font, 'EQUIPAMENTO');
+        $tipoLabel = ($data['item_type'] ?? '') === 'Phone' ? 'Celular' : 'Computador';
+        $this->row($pdf, $lib, $font, 'Tipo', $tipoLabel);
         foreach ($compFields as $cf) {
             if (!($cf['enabled'] ?? true)) continue;
             $this->row($pdf, $lib, $font, $cf['label'], $this->resolveField($data, $cf['field']));
@@ -362,6 +364,8 @@ class PluginTermosPdf {
 
         // Coluna esquerda — Equipamento
         $this->sectionTitle($pdf, $lib, $font, 'EQUIPAMENTO');
+        $tipoLabel = ($data['item_type'] ?? '') === 'Phone' ? 'Celular' : 'Computador';
+        $this->row($pdf, $lib, $font, 'Tipo', $tipoLabel);
         foreach ($compFields as $cf) {
             if (!($cf['enabled'] ?? true)) continue;
             $this->row($pdf, $lib, $font, $cf['label'], $this->resolveField($data, $cf['field']));
