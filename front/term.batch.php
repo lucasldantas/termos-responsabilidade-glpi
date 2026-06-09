@@ -3,31 +3,70 @@
 include('../../../inc/includes.php');
 Session::checkLoginUser();
 
+// ── AJAX: linha associada ao celular ─────────────────────────────────────────
+if (isset($_GET['action']) && $_GET['action'] === 'get_phone_line') {
+    header('Content-Type: application/json');
+    global $DB;
+    $pid = (int)($_GET['id'] ?? 0);
+    $lines_id = 0;
+    foreach ($DB->request(['SELECT' => ['lines_id'], 'FROM' => 'glpi_items_lines',
+                           'WHERE' => ['itemtype' => 'Phone', 'items_id' => $pid], 'LIMIT' => 1]) as $r) {
+        $lines_id = (int)$r['lines_id'];
+    }
+    echo json_encode(['lines_id' => $lines_id]);
+    exit;
+}
+
 // ── AJAX: process a single row ────────────────────────────────────────────────
 if (isset($_GET['action']) && $_GET['action'] === 'send_one' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
+    global $DB;
+
+    $item_type    = ($_POST['item_type'] ?? '') === 'Phone' ? 'Phone' : 'Computer';
     $computers_id = (int)($_POST['computers_id'] ?? 0);
+    $phones_id    = (int)($_POST['phones_id']    ?? 0);
+    $lines_id     = (int)($_POST['lines_id']     ?? 0);
     $users_id     = (int)($_POST['users_id']     ?? 0);
     $states_id    = (int)($_POST['states_id']    ?? 0);
     $customEmail  = trim($_POST['email']          ?? '');
 
-    if (!$computers_id) {
+    $itemId = $item_type === 'Phone' ? $phones_id : $computers_id;
+
+    if (!$itemId) {
         echo json_encode([
             'status'    => 'skip',
-            'msg'       => 'Nenhum computador selecionado.',
+            'msg'       => 'Nenhum equipamento selecionado.',
             'new_token' => Session::getNewCSRFToken(),
         ]);
         exit;
     }
-    try {
-        $upd = ['id' => $computers_id];
-        if ($users_id  > 0) $upd['users_id']  = $users_id;
-        if ($states_id > 0) $upd['states_id'] = $states_id;
-        if (count($upd) > 1) (new Computer())->update($upd);
 
-        $newId = PluginTermosTerm::createTerm($computers_id);
-        PluginTermosTerm::sendSignEmail($newId, $customEmail);
-        $data = PluginTermosTerm::getComputerWithUser($computers_id);
+    try {
+        if ($item_type === 'Phone') {
+            $upd = ['id' => $phones_id];
+            if ($users_id  > 0) $upd['users_id']  = $users_id;
+            if ($states_id > 0) $upd['states_id'] = $states_id;
+            if (count($upd) > 1) (new Phone())->update($upd);
+
+            if ($lines_id > 0) {
+                $DB->delete('glpi_items_lines', ['itemtype' => 'Phone', 'items_id' => $phones_id]);
+                $DB->insert('glpi_items_lines', ['lines_id' => $lines_id, 'itemtype' => 'Phone', 'items_id' => $phones_id]);
+            }
+
+            $newId = PluginTermosTerm::createTerm(0, 'Phone', $phones_id, $lines_id);
+            PluginTermosTerm::sendSignEmail($newId, $customEmail);
+            $data  = PluginTermosTerm::getPhoneWithUser($phones_id, $lines_id);
+        } else {
+            $upd = ['id' => $computers_id];
+            if ($users_id  > 0) $upd['users_id']  = $users_id;
+            if ($states_id > 0) $upd['states_id'] = $states_id;
+            if (count($upd) > 1) (new Computer())->update($upd);
+
+            $newId = PluginTermosTerm::createTerm($computers_id);
+            PluginTermosTerm::sendSignEmail($newId, $customEmail);
+            $data  = PluginTermosTerm::getComputerWithUser($computers_id);
+        }
+
         $nome = trim(($data['firstname'] ?? '') . ' ' . ($data['realname'] ?? '')) ?: ($data['username'] ?? '');
         echo json_encode([
             'status'    => 'ok',
@@ -35,10 +74,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'send_one' && $_SERVER['REQUES
             'new_token' => Session::getNewCSRFToken(),
         ]);
     } catch (\Throwable $e) {
-        $data = PluginTermosTerm::getComputerWithUser($computers_id);
         echo json_encode([
             'status'    => 'error',
-            'msg'       => ($data['computer_name'] ?? "Computador #{$computers_id}") . ': ' . $e->getMessage(),
+            'msg'       => "#{$itemId}: " . $e->getMessage(),
             'new_token' => Session::getNewCSRFToken(),
         ]);
     }
@@ -49,44 +87,50 @@ Html::header('Envio em Lote — Termos de Responsabilidade', $_SERVER['PHP_SELF'
 
 global $DB;
 
-// ── Computadores (com serial) ─────────────────────────────────────────────────
-$iterComp = $DB->request([
-    'SELECT'  => ['id', 'name', 'serial'],
-    'FROM'    => 'glpi_computers',
-    'WHERE'   => ['is_deleted' => 0],
-    'ORDERBY' => ['name ASC'],
-]);
-$computers         = [];   // id => label  (used by addRow select builder)
-$computersDetailed = [];   // id => {label, name, serial}
+// ── Computadores ──────────────────────────────────────────────────────────────
+$iterComp = $DB->request(['SELECT' => ['id', 'name', 'serial'], 'FROM' => 'glpi_computers',
+                          'WHERE' => ['is_deleted' => 0], 'ORDERBY' => ['name ASC']]);
+$computers = []; $computersDetailed = [];
 foreach ($iterComp as $row) {
     $label = $row['name'];
     if (!empty($row['serial'])) $label .= ' (S/N: ' . $row['serial'] . ')';
     $id = (int)$row['id'];
     $computers[$id]         = $label;
-    $computersDetailed[$id] = [
-        'label'  => $label,
-        'name'   => $row['name'],
-        'serial' => $row['serial'] ?? '',
-    ];
+    $computersDetailed[$id] = ['label' => $label, 'name' => $row['name'], 'serial' => $row['serial'] ?? ''];
 }
 
-// ── Usuários (com login) ──────────────────────────────────────────────────────
-$iterUsers = $DB->request([
-    'SELECT'  => ['id', 'name', 'firstname', 'realname'],
-    'FROM'    => 'glpi_users',
-    'WHERE'   => ['is_deleted' => 0, 'is_active' => 1],
-    'ORDERBY' => ['realname ASC', 'firstname ASC'],
-]);
-$users         = [];   // id => label
-$usersDetailed = [];   // id => {label, login}
+// ── Celulares ─────────────────────────────────────────────────────────────────
+$iterPhones = $DB->request(['SELECT' => ['id', 'name', 'serial'], 'FROM' => 'glpi_phones',
+                            'WHERE' => ['is_deleted' => 0], 'ORDERBY' => ['name ASC']]);
+$phones = []; $phonesDetailed = [];
+foreach ($iterPhones as $row) {
+    $label = $row['name'];
+    if (!empty($row['serial'])) $label .= ' (S/N: ' . $row['serial'] . ')';
+    $id = (int)$row['id'];
+    $phones[$id]         = $label;
+    $phonesDetailed[$id] = ['label' => $label, 'name' => $row['name'], 'serial' => $row['serial'] ?? ''];
+}
+
+// ── Linhas telefônicas ────────────────────────────────────────────────────────
+$iterLines = $DB->request(['SELECT' => ['id', 'name', 'caller_num'], 'FROM' => 'glpi_lines',
+                           'WHERE' => ['is_deleted' => 0], 'ORDERBY' => ['name ASC']]);
+$lines = [];
+foreach ($iterLines as $row) {
+    $label = $row['name'];
+    if (!empty($row['caller_num'])) $label .= ' (' . $row['caller_num'] . ')';
+    $lines[(int)$row['id']] = $label;
+}
+
+// ── Usuários ──────────────────────────────────────────────────────────────────
+$iterUsers = $DB->request(['SELECT' => ['id', 'name', 'firstname', 'realname'], 'FROM' => 'glpi_users',
+                           'WHERE' => ['is_deleted' => 0, 'is_active' => 1],
+                           'ORDERBY' => ['realname ASC', 'firstname ASC']]);
+$users = []; $usersDetailed = [];
 foreach ($iterUsers as $row) {
     $nome = trim($row['firstname'] . ' ' . $row['realname']) ?: $row['name'];
     $id   = (int)$row['id'];
     $users[$id]         = $nome . ' (' . $row['name'] . ')';
-    $usersDetailed[$id] = [
-        'label' => $nome . ' (' . $row['name'] . ')',
-        'login' => $row['name'],
-    ];
+    $usersDetailed[$id] = ['label' => $nome . ' (' . $row['name'] . ')', 'login' => $row['name']];
 }
 
 // ── Status ────────────────────────────────────────────────────────────────────
@@ -94,16 +138,36 @@ $iterStates = $DB->request(['SELECT' => ['id', 'name'], 'FROM' => 'glpi_states',
 $states = [];
 foreach ($iterStates as $row) { $states[(int)$row['id']] = $row['name']; }
 
-$computersJson         = json_encode($computers,         JSON_UNESCAPED_UNICODE);
-$computersDetailedJson = json_encode($computersDetailed, JSON_UNESCAPED_UNICODE);
-$usersJson             = json_encode($users,             JSON_UNESCAPED_UNICODE);
-$usersDetailedJson     = json_encode($usersDetailed,     JSON_UNESCAPED_UNICODE);
-$statesJson            = json_encode($states,            JSON_UNESCAPED_UNICODE);
+$computersJson      = json_encode($computers,         JSON_UNESCAPED_UNICODE);
+$computersDetJson   = json_encode($computersDetailed, JSON_UNESCAPED_UNICODE);
+$phonesJson         = json_encode($phones,            JSON_UNESCAPED_UNICODE);
+$phonesDetJson      = json_encode($phonesDetailed,    JSON_UNESCAPED_UNICODE);
+$linesJson          = json_encode($lines,             JSON_UNESCAPED_UNICODE);
+$usersJson          = json_encode($users,             JSON_UNESCAPED_UNICODE);
+$usersDetailedJson  = json_encode($usersDetailed,     JSON_UNESCAPED_UNICODE);
+$statesJson         = json_encode($states,            JSON_UNESCAPED_UNICODE);
 ?>
 
 <div class="container-fluid" style="max-width:1400px; margin:30px auto; padding:0 20px;">
     <h2><i class="fas fa-paper-plane"></i> Envio em Lote de Termos</h2>
-    <p class="text-muted" style="margin-bottom:20px;">
+
+    <!-- ── Seletor de tipo ───────────────────────────────────────────────────── -->
+    <div style="display:flex; gap:10px; margin-bottom:20px;">
+        <label id="lbl-computer" onclick="switchMode('computer')"
+               style="display:flex; align-items:center; gap:8px; cursor:pointer;
+                      padding:10px 22px; border:2px solid #0d6efd; border-radius:6px;
+                      background:#e7f1ff; font-weight:600; user-select:none;">
+            💻 Computadores
+        </label>
+        <label id="lbl-phone" onclick="switchMode('phone')"
+               style="display:flex; align-items:center; gap:8px; cursor:pointer;
+                      padding:10px 22px; border:2px solid #dee2e6; border-radius:6px;
+                      background:#fff; font-weight:600; user-select:none;">
+            📱 Celulares
+        </label>
+    </div>
+
+    <p id="batch-desc" class="text-muted" style="margin-bottom:20px;">
         Adicione os computadores e responsáveis. Um link de assinatura será enviado por e-mail para cada um.
     </p>
 
@@ -116,14 +180,12 @@ $statesJson            = json_encode($states,            JSON_UNESCAPED_UNICODE)
             <span id="csv-toggle-icon" style="font-size:0.85em; color:#6c757d;">▼ Expandir</span>
         </div>
         <div id="csv-section" style="display:none; padding:18px;">
-            <p class="text-muted" style="margin-bottom:12px; font-size:0.92em;">
-                Faça upload de um arquivo CSV com as colunas:
-                <strong>serial</strong>, <strong>usuario</strong>, <strong>email</strong>.
-                O computador é identificado pelo número de série (único).
+            <p id="csv-desc" class="text-muted" style="margin-bottom:12px; font-size:0.92em;">
+                Colunas: <strong>serial</strong>, <strong>usuario</strong>, <strong>email</strong>.
+                O equipamento é identificado pelo número de série.
             </p>
             <div style="margin-bottom:10px;">
-                <a id="csv-template-link" href="#" onclick="downloadCsvTemplate(event)"
-                   style="font-size:0.88em; color:#0d6efd;">
+                <a href="#" onclick="downloadCsvTemplate(event)" style="font-size:0.88em; color:#0d6efd;">
                     ⬇ Baixar modelo CSV
                 </a>
             </div>
@@ -142,14 +204,8 @@ $statesJson            = json_encode($states,            JSON_UNESCAPED_UNICODE)
 
         <div style="background:#fff; border:1px solid #dee2e6; border-radius:6px; overflow-x:auto; margin-bottom:15px;">
             <table class="table table-bordered" style="margin:0; min-width:900px;" id="batch-table">
-                <thead style="background:#f8f9fa;">
-                    <tr>
-                        <th style="width:28%; min-width:220px;">Computador</th>
-                        <th style="width:16%; min-width:160px;">Status</th>
-                        <th style="width:24%; min-width:200px;">Usuário Responsável</th>
-                        <th style="width:24%; min-width:180px;">E-mail</th>
-                        <th style="width:8%; min-width:50px;"></th>
-                    </tr>
+                <thead id="batch-head" style="background:#f8f9fa;">
+                    <!-- gerado pelo JS via renderHeader() -->
                 </thead>
                 <tbody id="batch-body">
                     <!-- linhas geradas pelo JS -->
@@ -191,101 +247,167 @@ $statesJson            = json_encode($states,            JSON_UNESCAPED_UNICODE)
 <script>
 // ── Data injected by PHP ──────────────────────────────────────────────────────
 const COMPUTERS          = <?= $computersJson ?>;
-const COMPUTERS_DETAILED = <?= $computersDetailedJson ?>;
+const COMPUTERS_DETAILED = <?= $computersDetJson ?>;
+const PHONES             = <?= $phonesJson ?>;
+const PHONES_DETAILED    = <?= $phonesDetJson ?>;
+const LINES              = <?= $linesJson ?>;
 const USERS              = <?= $usersJson ?>;
 const USERS_DETAILED     = <?= $usersDetailedJson ?>;
 const STATES             = <?= $statesJson ?>;
 
-// ── Lookup maps for CSV import ────────────────────────────────────────────────
-const COMP_BY_SERIAL = {}; // serial (lower) → id
-const USER_BY_LOGIN  = {}; // login (lower)  → id
+// ── Lookup maps ───────────────────────────────────────────────────────────────
+const COMP_BY_SERIAL  = {};
+const PHONE_BY_SERIAL = {};
+const USER_BY_LOGIN   = {};
 
 (function buildMaps() {
     for (const [id, info] of Object.entries(COMPUTERS_DETAILED)) {
         if (info.serial) COMP_BY_SERIAL[info.serial.toLowerCase()] = id;
+    }
+    for (const [id, info] of Object.entries(PHONES_DETAILED)) {
+        if (info.serial) PHONE_BY_SERIAL[info.serial.toLowerCase()] = id;
     }
     for (const [id, info] of Object.entries(USERS_DETAILED)) {
         if (info.login) USER_BY_LOGIN[info.login.toLowerCase()] = id;
     }
 })();
 
-
-let rowIndex = 0;
+let rowIndex   = 0;
+let currentMode = 'computer'; // 'computer' | 'phone'
 
 // ── Select builder ────────────────────────────────────────────────────────────
 function buildSelect(name, options, placeholder, extraClass) {
     let s = `<select name="${name}" class="form-control ${extraClass}" style="width:100%;">`;
     s += `<option value="">${placeholder}</option>`;
     for (const [id, label] of Object.entries(options)) {
-        s += `<option value="${id}">${label.replace(/</g, '&lt;')}</option>`;
+        s += `<option value="${id}">${String(label).replace(/</g, '&lt;')}</option>`;
     }
     s += '</select>';
     return s;
 }
 
+// ── Mode switch ───────────────────────────────────────────────────────────────
+function switchMode(mode) {
+    if (currentMode === mode) return;
+    currentMode = mode;
+
+    const isPhone = mode === 'phone';
+
+    document.getElementById('lbl-computer').style.borderColor = isPhone ? '#dee2e6' : '#0d6efd';
+    document.getElementById('lbl-computer').style.background  = isPhone ? '#fff'    : '#e7f1ff';
+    document.getElementById('lbl-phone').style.borderColor    = isPhone ? '#0d6efd' : '#dee2e6';
+    document.getElementById('lbl-phone').style.background     = isPhone ? '#e7f1ff' : '#fff';
+
+    document.getElementById('batch-desc').textContent = isPhone
+        ? 'Adicione os celulares e responsáveis. Um link de assinatura será enviado por e-mail para cada um.'
+        : 'Adicione os computadores e responsáveis. Um link de assinatura será enviado por e-mail para cada um.';
+
+    document.getElementById('csv-desc').innerHTML = isPhone
+        ? 'Colunas: <strong>serial</strong>, <strong>linha</strong>, <strong>usuario</strong>, <strong>email</strong>. O celular é identificado pelo número de série.'
+        : 'Colunas: <strong>serial</strong>, <strong>usuario</strong>, <strong>email</strong>. O computador é identificado pelo número de série.';
+
+    renderHeader();
+    document.getElementById('batch-body').innerHTML = '';
+    rowIndex = 0;
+    addRow(); addRow(); addRow();
+}
+
+// ── Table header ──────────────────────────────────────────────────────────────
+function renderHeader() {
+    const isPhone = currentMode === 'phone';
+    let th = '<tr>';
+    if (isPhone) {
+        th += '<th style="min-width:200px;">Celular</th>';
+        th += '<th style="min-width:160px;">Linha Telefônica</th>';
+    } else {
+        th += '<th style="min-width:220px;">Computador</th>';
+    }
+    th += '<th style="min-width:150px;">Status</th>';
+    th += '<th style="min-width:200px;">Usuário Responsável</th>';
+    th += '<th style="min-width:180px;">E-mail</th>';
+    th += '<th style="min-width:50px;"></th>';
+    th += '</tr>';
+    document.getElementById('batch-head').innerHTML = th;
+}
+
 // ── Add a table row ───────────────────────────────────────────────────────────
-function addRow(compId, userId, email) {
-    const i  = rowIndex++;
-    const tr = document.createElement('tr');
-    tr.id    = 'row-' + i;
-    tr.innerHTML = `
-        <td>
-            ${buildSelect('batch[' + i + '][computers_id]', COMPUTERS, 'Selecione o computador...', 'sel-comp')}
-        </td>
-        <td>
-            ${buildSelect('batch[' + i + '][states_id]', STATES, 'Manter atual...', 'sel-state')}
-        </td>
-        <td>
-            ${buildSelect('batch[' + i + '][users_id]', USERS, 'Usuário atual da máquina...', 'sel-user')}
-        </td>
-        <td>
-            <input type="email" name="batch[${i}][email]" class="form-control inp-email"
-                   placeholder="E-mail do usuário..." style="width:100%;">
-        </td>
-        <td style="text-align:center; vertical-align:middle;">
-            <button type="button" class="btn btn-sm btn-danger" onclick="removeRow('row-${i}')">🗑️</button>
-        </td>
-    `;
+function addRow(itemId, lineId, userId, email) {
+    const i       = rowIndex++;
+    const isPhone = currentMode === 'phone';
+    const tr      = document.createElement('tr');
+    tr.id         = 'row-' + i;
+    tr.dataset.type = currentMode;
+
+    let html = '';
+
+    if (isPhone) {
+        html += `<td>${buildSelect('batch[${i}][phones_id]',  PHONES, 'Selecione o celular...', 'sel-phone')}</td>`;
+        html += `<td>${buildSelect('batch[${i}][lines_id]',   LINES,  'Sem linha / manter...',  'sel-line')}</td>`;
+        html += `<input type="hidden" name="batch[${i}][item_type]" value="Phone">`;
+    } else {
+        html += `<td>${buildSelect('batch[${i}][computers_id]', COMPUTERS, 'Selecione o computador...', 'sel-comp')}</td>`;
+        html += `<input type="hidden" name="batch[${i}][item_type]" value="Computer">`;
+    }
+
+    html += `<td>${buildSelect('batch[${i}][states_id]', STATES, 'Manter atual...', 'sel-state')}</td>`;
+    html += `<td>${buildSelect('batch[${i}][users_id]',  USERS,  'Usuário atual...', 'sel-user')}</td>`;
+    html += `<td><input type="email" name="batch[${i}][email]" class="form-control inp-email" placeholder="E-mail do usuário..." style="width:100%;"></td>`;
+    html += `<td style="text-align:center; vertical-align:middle;"><button type="button" class="btn btn-sm btn-danger" onclick="removeRow('row-${i}')">🗑️</button></td>`;
+
+    tr.innerHTML = html;
     document.getElementById('batch-body').appendChild(tr);
 
-    const $comp  = $(tr).find('.sel-comp');
+    const s2 = (ph) => ({ placeholder: ph, allowClear: true, width: '100%',
+        language: { noResults: () => 'Nenhum encontrado.', searching: () => 'Buscando...' } });
+
     const $state = $(tr).find('.sel-state');
     const $user  = $(tr).find('.sel-user');
+    $state.select2(s2('Manter atual...'));
+    $user.select2(s2('Usuário atual...'));
 
-    $comp.select2({
-        placeholder: 'Selecione o computador...', allowClear: true, width: '100%',
-        language: { noResults: () => 'Nenhum encontrado.', searching: () => 'Buscando...' }
-    });
-    $state.select2({
-        placeholder: 'Manter atual...', allowClear: true, width: '100%',
-        language: { noResults: () => 'Nenhum encontrado.', searching: () => 'Buscando...' }
-    });
-    $user.select2({
-        placeholder: 'Usuário atual da máquina...', allowClear: true, width: '100%',
-        language: { noResults: () => 'Nenhum encontrado.', searching: () => 'Buscando...' }
-    });
+    function fillFromData(data) {
+        if (data.states_id > 0) $state.val(String(data.states_id)).trigger('change');
+        else $state.val(null).trigger('change');
+        if (data.users_id > 0) $user.val(String(data.users_id)).trigger('change');
+        else $user.val(null).trigger('change');
+        const emailInput = tr.querySelector('.inp-email');
+        if (data.email) { emailInput.value = data.email; emailInput.placeholder = data.email; }
+        else            { emailInput.value = ''; emailInput.placeholder = '⚠️ Sem e-mail — informe aqui'; }
+    }
 
-    $comp.on('change', function() {
-        const cid = $(this).val();
-        if (!cid) return;
-        $.getJSON('term.form.php?get_computer=1&id=' + cid, function(data) {
-            if (data.states_id > 0) $state.val(String(data.states_id)).trigger('change');
-            else $state.val(null).trigger('change');
-            if (data.users_id > 0) $user.val(String(data.users_id)).trigger('change');
-            const emailInput = tr.querySelector('.inp-email');
-            if (data.email) {
-                emailInput.value       = data.email;
-                emailInput.placeholder = data.email;
-            } else {
-                emailInput.value       = '';
-                emailInput.placeholder = '⚠️ Sem e-mail — informe aqui';
-            }
+    if (isPhone) {
+        const $phone = $(tr).find('.sel-phone');
+        const $line  = $(tr).find('.sel-line');
+        $phone.select2(s2('Selecione o celular...'));
+        $line.select2(s2('Sem linha / manter...'));
+
+        $phone.on('change', function() {
+            const pid = $(this).val();
+            if (!pid) return;
+            $.getJSON('term.form.php?get_phone=1&id=' + pid, function(data) {
+                fillFromData(data);
+                // Pré-preenche a linha associada ao celular
+                $.getJSON('term.batch.php?action=get_phone_line&id=' + pid, function(ld) {
+                    if (ld.lines_id > 0) $line.val(String(ld.lines_id)).trigger('change');
+                });
+            });
         });
-    });
 
-    if (compId) { $comp.val(String(compId)).trigger('change'); }
-    if (userId) { $user.val(String(userId)).trigger('change'); }
-    if (email)  { tr.querySelector('.inp-email').value = email; }
+        if (itemId) $phone.val(String(itemId)).trigger('change');
+        if (lineId) $line.val(String(lineId)).trigger('change');
+    } else {
+        const $comp = $(tr).find('.sel-comp');
+        $comp.select2(s2('Selecione o computador...'));
+        $comp.on('change', function() {
+            const cid = $(this).val();
+            if (!cid) return;
+            $.getJSON('term.form.php?get_computer=1&id=' + cid, fillFromData);
+        });
+        if (itemId) $comp.val(String(itemId)).trigger('change');
+    }
+
+    if (userId) $user.val(String(userId)).trigger('change');
+    if (email)  tr.querySelector('.inp-email').value = email;
 
     return tr;
 }
@@ -296,11 +418,9 @@ function removeRow(id) {
     if (document.getElementById('batch-body').children.length === 0) addRow();
 }
 
-function resetForm() {
-    location.reload();
-}
+function resetForm() { location.reload(); }
 
-// ── CSV section toggle ────────────────────────────────────────────────────────
+// ── CSV section ───────────────────────────────────────────────────────────────
 function toggleCsvSection() {
     const section = document.getElementById('csv-section');
     const icon    = document.getElementById('csv-toggle-icon');
@@ -309,47 +429,39 @@ function toggleCsvSection() {
     icon.textContent = hidden ? '▲ Recolher' : '▼ Expandir';
 }
 
-// ── CSV template download ─────────────────────────────────────────────────────
 function downloadCsvTemplate(e) {
     e.preventDefault();
-    const content = 'serial,usuario,email\n';
+    const isPhone = currentMode === 'phone';
+    const content = isPhone ? 'serial,linha,usuario,email\n' : 'serial,usuario,email\n';
     const blob    = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const url     = URL.createObjectURL(blob);
     const a       = document.createElement('a');
-    a.href        = url;
-    a.download    = 'modelo_lote_termos.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = 'modelo_lote_termos.csv';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-// ── CSV import ────────────────────────────────────────────────────────────────
 function importCsv() {
     const fileInput = document.getElementById('csv-file');
     const summary   = document.getElementById('csv-summary');
-    if (!fileInput.files || fileInput.files.length === 0) {
-        alert('Selecione um arquivo CSV.');
-        return;
-    }
-    const file   = fileInput.files[0];
+    if (!fileInput.files || !fileInput.files.length) { alert('Selecione um arquivo CSV.'); return; }
+
     const reader = new FileReader();
     reader.onload = function(e) {
-        const text  = e.target.result;
-        const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+        const lines = e.target.result.split(/\r?\n/).filter(l => l.trim() !== '');
         if (lines.length < 2) {
             summary.style.display = 'block';
             summary.innerHTML = '<span style="color:#dc3545;">Arquivo vazio ou sem dados além do cabeçalho.</span>';
             return;
         }
 
-        // Parse header
+        const isPhone   = currentMode === 'phone';
         const header    = lines[0].split(',').map(h => h.trim().toLowerCase());
         const colSerial = header.indexOf('serial');
+        const colLinha  = header.indexOf('linha');
         const colUser   = header.indexOf('usuario');
         const colEmail  = header.indexOf('email');
 
-        // Clear existing rows
         document.getElementById('batch-body').innerHTML = '';
         rowIndex = 0;
 
@@ -358,34 +470,38 @@ function importCsv() {
         for (let li = 1; li < lines.length; li++) {
             const cols      = lines[li].split(',').map(c => c.trim());
             const serialRaw = colSerial >= 0 ? (cols[colSerial] || '') : '';
+            const linhaRaw  = colLinha  >= 0 ? (cols[colLinha]  || '') : '';
             const userRaw   = colUser   >= 0 ? (cols[colUser]   || '') : '';
             const emailVal  = colEmail  >= 0 ? (cols[colEmail]  || '') : '';
 
             if (!serialRaw && !userRaw && !emailVal) continue;
 
-            // Resolve computer por serial (único)
-            const compId = serialRaw ? (COMP_BY_SERIAL[serialRaw.toLowerCase()] || null) : null;
-
-            // Resolve user por login
+            const itemId = serialRaw
+                ? (isPhone ? (PHONE_BY_SERIAL[serialRaw.toLowerCase()] || null)
+                           : (COMP_BY_SERIAL[serialRaw.toLowerCase()]  || null))
+                : null;
             const userId = userRaw ? (USER_BY_LOGIN[userRaw.toLowerCase()] || null) : null;
 
-            if (!compId) notFound++;
-            else imported++;
+            // Resolve linha pelo nome/número
+            let lineId = null;
+            if (isPhone && linhaRaw) {
+                for (const [id, label] of Object.entries(LINES)) {
+                    if (label.toLowerCase().includes(linhaRaw.toLowerCase())) { lineId = id; break; }
+                }
+            }
 
-            addRow(compId, userId, emailVal);
+            if (!itemId) notFound++; else imported++;
+            addRow(itemId, lineId, userId, emailVal);
         }
 
-        // Ensure at least one row
-        if (document.getElementById('batch-body').children.length === 0) addRow();
+        if (!document.getElementById('batch-body').children.length) addRow();
 
         summary.style.display = 'block';
         summary.innerHTML =
             `<span style="color:#198754;"><strong>${imported}</strong> linha(s) importada(s)</span>` +
-            (notFound > 0
-                ? `, <span style="color:#dc3545;"><strong>${notFound}</strong> não encontrada(s)</span>`
-                : '');
+            (notFound > 0 ? `, <span style="color:#dc3545;"><strong>${notFound}</strong> não encontrada(s)</span>` : '');
     };
-    reader.readAsText(file, 'UTF-8');
+    reader.readAsText(fileInput.files[0], 'UTF-8');
 }
 
 // ── AJAX batch sending ────────────────────────────────────────────────────────
@@ -393,59 +509,69 @@ async function startSending() {
     const tbody = document.getElementById('batch-body');
     const rows  = Array.from(tbody.querySelectorAll('tr'));
 
-    // Collect row data
     const items = [];
     for (const tr of rows) {
-        const compSel  = tr.querySelector('.sel-comp');
+        const type     = tr.dataset.type || 'computer';
+        const isPhone  = type === 'phone';
         const stateSel = tr.querySelector('.sel-state');
         const userSel  = tr.querySelector('.sel-user');
         const emailInp = tr.querySelector('.inp-email');
-        items.push({
+        const item     = {
             tr,
-            computers_id: compSel  ? compSel.value  : '',
+            item_type:    isPhone ? 'Phone' : 'Computer',
+            computers_id: '',
+            phones_id:    '',
+            lines_id:     '',
             states_id:    stateSel ? stateSel.value : '',
             users_id:     userSel  ? userSel.value  : '',
             email:        emailInp ? emailInp.value : '',
-        });
+        };
+        if (isPhone) {
+            const phoneSel = tr.querySelector('.sel-phone');
+            const lineSel  = tr.querySelector('.sel-line');
+            item.phones_id = phoneSel ? phoneSel.value : '';
+            item.lines_id  = lineSel  ? lineSel.value  : '';
+        } else {
+            const compSel  = tr.querySelector('.sel-comp');
+            item.computers_id = compSel ? compSel.value : '';
+        }
+        items.push(item);
     }
 
-    const hasComp = items.some(it => it.computers_id);
-    if (!hasComp) {
-        alert('Selecione ao menos um computador antes de enviar.');
+    const hasItem = items.some(it => it.computers_id || it.phones_id);
+    if (!hasItem) {
+        alert('Selecione ao menos um equipamento antes de enviar.');
         return;
     }
 
-    // Token começa com o do formulário; cada resposta devolve um novo
     let csrfToken = document.querySelector('input[name="_glpi_csrf_token"]').value;
     const total   = items.length;
 
-    // Show progress section, hide form controls
     document.getElementById('progress-section').style.display = 'block';
     document.getElementById('btn-send-all').disabled = true;
     document.getElementById('btn-add-row').disabled  = true;
-    document.getElementById('progress-results').innerHTML   = '';
-    document.getElementById('progress-summary').style.display = 'none';
-    document.getElementById('progress-actions').style.display = 'none';
-
+    document.getElementById('progress-results').innerHTML      = '';
+    document.getElementById('progress-summary').style.display  = 'none';
+    document.getElementById('progress-actions').style.display  = 'none';
     updateProgress(0, total);
 
-    let okCount    = 0;
-    let errCount   = 0;
-    let skipCount  = 0;
+    let okCount = 0, errCount = 0, skipCount = 0;
 
     for (let idx = 0; idx < items.length; idx++) {
         const item = items[idx];
-        document.getElementById('progress-title').textContent =
-            `Processando ${idx + 1} de ${total}...`;
+        document.getElementById('progress-title').textContent = `Processando ${idx + 1} de ${total}...`;
 
         let result;
         try {
             const body = new URLSearchParams({
-                computers_id:      item.computers_id,
-                states_id:         item.states_id,
-                users_id:          item.users_id,
-                email:             item.email,
-                _glpi_csrf_token:  csrfToken,
+                item_type:        item.item_type,
+                computers_id:     item.computers_id,
+                phones_id:        item.phones_id,
+                lines_id:         item.lines_id,
+                states_id:        item.states_id,
+                users_id:         item.users_id,
+                email:            item.email,
+                _glpi_csrf_token: csrfToken,
             });
             const resp = await fetch('term.batch.php?action=send_one', {
                 method: 'POST',
@@ -453,26 +579,20 @@ async function startSending() {
                 body: body.toString(),
             });
             result = await resp.json();
-            // Usa o novo token retornado pelo servidor na próxima requisição
             if (result.new_token) csrfToken = result.new_token;
         } catch (err) {
             result = { status: 'error', msg: 'Erro de rede: ' + err.message };
         }
 
         addProgressResult(result);
-        if (result.status === 'ok')    okCount++;
+        if (result.status === 'ok')         okCount++;
         else if (result.status === 'error') errCount++;
-        else skipCount++;
+        else                                skipCount++;
 
         updateProgress(idx + 1, total);
-
-        // 500ms delay between requests (skip after last)
-        if (idx < items.length - 1) {
-            await new Promise(r => setTimeout(r, 500));
-        }
+        if (idx < items.length - 1) await new Promise(r => setTimeout(r, 500));
     }
 
-    // Done
     document.getElementById('progress-title').textContent = 'Concluído!';
     setProgressBarDone();
 
@@ -480,45 +600,36 @@ async function startSending() {
     summaryEl.style.display = 'block';
     summaryEl.innerHTML =
         `<span style="color:#198754;">✅ ${okCount} enviado(s) com sucesso</span>` +
-        (errCount  > 0 ? ` &nbsp;|&nbsp; <span style="color:#dc3545;">❌ ${errCount} erro(s)</span>`    : '') +
+        (errCount  > 0 ? ` &nbsp;|&nbsp; <span style="color:#dc3545;">❌ ${errCount} erro(s)</span>`      : '') +
         (skipCount > 0 ? ` &nbsp;|&nbsp; <span style="color:#856404;">⚠️ ${skipCount} ignorado(s)</span>` : '');
 
-    const actionsEl = document.getElementById('progress-actions');
-    actionsEl.style.display = 'flex';
+    document.getElementById('progress-actions').style.display = 'flex';
 }
 
 function updateProgress(done, total) {
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
     const bar = document.getElementById('progress-bar');
-    bar.style.width      = pct + '%';
-    bar.textContent      = pct + '%';
+    bar.style.width = pct + '%'; bar.textContent = pct + '%';
     bar.setAttribute('aria-valuenow', pct);
 }
-
 function setProgressBarDone() {
     const bar = document.getElementById('progress-bar');
     bar.classList.remove('progress-bar-animated', 'progress-bar-striped', 'bg-primary');
     bar.classList.add('bg-success');
 }
-
 function addProgressResult(result) {
     const container = document.getElementById('progress-results');
-    const div       = document.createElement('div');
-    let bg, icon;
-    if (result.status === 'ok') {
-        bg = '#d1e7dd'; icon = '✅';
-    } else if (result.status === 'error') {
-        bg = '#f8d7da'; icon = '❌';
-    } else {
-        bg = '#fff3cd'; icon = '⚠️';
-    }
+    const div = document.createElement('div');
+    const bg  = result.status === 'ok' ? '#d1e7dd' : result.status === 'error' ? '#f8d7da' : '#fff3cd';
+    const ico = result.status === 'ok' ? '✅' : result.status === 'error' ? '❌' : '⚠️';
     div.style.cssText = `padding:6px 12px; margin-bottom:5px; border-radius:4px; background:${bg}; font-size:0.9em;`;
-    div.textContent   = icon + ' ' + result.msg;
+    div.textContent = ico + ' ' + result.msg;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
 }
 
-// ── Init: 3 rows on load ──────────────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────────────────────
+renderHeader();
 addRow(); addRow(); addRow();
 </script>
 
