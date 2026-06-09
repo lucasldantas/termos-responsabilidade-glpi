@@ -4,6 +4,65 @@ include('../../../inc/includes.php');
 
 Session::checkLoginUser();
 
+// ── AJAX: verificar hash de documento ────────────────────────────────────────
+if (isset($_GET['action']) && $_GET['action'] === 'verify_hash' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json');
+
+    $hash = trim($_POST['hash'] ?? '');
+    if (empty($hash) || !preg_match('/^[a-f0-9]{64}$/i', $hash)) {
+        echo json_encode(['valid' => false, 'error' => 'Hash inválido.']);
+        exit;
+    }
+
+    global $DB;
+    $hash = strtolower($hash);
+
+    // Busca em termos de responsabilidade
+    $it = $DB->request([
+        'SELECT' => [
+            't.id', 't.status', 't.date_creation', 't.date_signed', 't.pdf_hash',
+            'c.name AS computer_name', 'c.serial',
+            'u.firstname', 'u.realname', 'u.name AS username',
+            'e.completename AS entity',
+            'i.firstname AS issuer_firstname', 'i.realname AS issuer_realname', 'i.name AS issuer_username',
+        ],
+        'FROM'      => ['glpi_plugin_termos_terms AS t'],
+        'LEFT JOIN' => [
+            'glpi_computers AS c' => ['ON' => ['t' => 'computers_id', 'c' => 'id']],
+            'glpi_users AS u'     => ['ON' => ['t' => 'users_id',     'u' => 'id']],
+            'glpi_entities AS e'  => ['ON' => ['t' => 'entities_id',  'e' => 'id']],
+            'glpi_users AS i'     => ['ON' => ['t' => 'issuer_id',    'i' => 'id']],
+        ],
+        'WHERE' => ['t.pdf_hash' => $hash],
+        'LIMIT' => 1,
+    ]);
+
+    $row = $it->current();
+    if (!$row) {
+        echo json_encode(['valid' => false, 'msg' => 'Nenhum documento encontrado com este hash. O arquivo pode ter sido adulterado ou não pertence a este sistema.']);
+        exit;
+    }
+
+    $nomeResponsavel = trim(($row['firstname'] ?? '') . ' ' . ($row['realname'] ?? '')) ?: ($row['username'] ?? '-');
+    $nomeEmissor     = trim(($row['issuer_firstname'] ?? '') . ' ' . ($row['issuer_realname'] ?? '')) ?: ($row['issuer_username'] ?? '-');
+
+    echo json_encode([
+        'valid'          => true,
+        'id'             => (int)$row['id'],
+        'status'         => $row['status'],
+        'computer'       => $row['computer_name'] ?? '-',
+        'serial'         => $row['serial'] ?? '-',
+        'entity'         => $row['entity'] ?? '-',
+        'responsavel'    => $nomeResponsavel,
+        'emissor'        => $nomeEmissor,
+        'date_creation'  => $row['date_creation'] ? date('d/m/Y H:i', strtotime($row['date_creation'])) : '-',
+        'date_signed'    => $row['date_signed']   ? date('d/m/Y H:i', strtotime($row['date_signed']))   : '-',
+        'hash'           => $hash,
+    ]);
+    exit;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 $msg_success = '';
 $msg_error   = '';
 
@@ -170,6 +229,8 @@ echo '</form>';
 echo '<div style="display:flex; gap:10px; margin-bottom:15px; flex-wrap:wrap;">';
 echo '<a href="term.form.php" class="btn btn-primary"><i class="fas fa-plus"></i> Novo Termo</a>';
 echo '<a href="term.batch.php" class="btn btn-success"><i class="fas fa-paper-plane"></i> Enviar Lote</a>';
+echo '<button type="button" class="btn btn-info" onclick="openVerifyModal()">'
+   . '<i class="fas fa-shield-alt"></i> Verificar Documento</button>';
 if ($isAdmin) {
     echo '<a href="settings.php" class="btn btn-secondary"><i class="fas fa-cog"></i> Configurações</a>';
 }
@@ -268,5 +329,193 @@ echo '</div>';
 Html::printPager($start, $total, $baseUrl . 'start=', $limit);
 
 echo '</div>';
+
+// ── Modal: Verificar documento ───────────────────────────────────────────────
+echo '
+<div id="verifyModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
+     z-index:9999; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:8px; width:520px; max-width:95vw;
+              box-shadow:0 8px 32px rgba(0,0,0,.3); overflow:hidden;">
+
+    <!-- Header -->
+    <div style="background:#0d6efd; color:#fff; padding:16px 20px;
+                display:flex; align-items:center; justify-content:space-between;">
+      <span style="font-size:1.05em; font-weight:600;">
+        <i class="fas fa-shield-alt"></i>&nbsp; Verificar Autenticidade do Documento
+      </span>
+      <button onclick="closeVerifyModal()"
+              style="background:none; border:none; color:#fff; font-size:1.4em; cursor:pointer; line-height:1;">
+        &times;
+      </button>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:24px;">
+
+      <!-- Área de upload drag-and-drop -->
+      <div id="verifyDropzone"
+           onclick="document.getElementById(\'verifyFile\').click()"
+           style="border:2px dashed #adb5bd; border-radius:8px; padding:32px 20px;
+                  text-align:center; cursor:pointer; transition:.2s; background:#f8f9fa;"
+           ondragover="event.preventDefault(); this.style.borderColor=\'#0d6efd\';"
+           ondragleave="this.style.borderColor=\'#adb5bd\';"
+           ondrop="handleVerifyDrop(event)">
+        <div style="font-size:2.5em; color:#6c757d;">📄</div>
+        <div style="margin-top:8px; color:#495057; font-weight:500;">
+          Arraste o PDF aqui ou clique para selecionar
+        </div>
+        <div style="font-size:.8em; color:#6c757d; margin-top:4px;">
+          Termo de Responsabilidade ou Termo de Devolução
+        </div>
+        <input type="file" id="verifyFile" accept=".pdf" style="display:none"
+               onchange="handleVerifyFile(this.files[0])">
+      </div>
+
+      <!-- Progresso / resultado -->
+      <div id="verifyStatus" style="margin-top:16px; display:none;"></div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:12px 20px; background:#f8f9fa; border-top:1px solid #dee2e6;
+                display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="resetVerifyModal()" id="verifyBtnReset"
+              class="btn btn-outline-secondary btn-sm" style="display:none;">
+        🔄 Verificar outro
+      </button>
+      <button onclick="closeVerifyModal()" class="btn btn-secondary btn-sm">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openVerifyModal() {
+    resetVerifyModal();
+    document.getElementById("verifyModal").style.display = "flex";
+}
+function closeVerifyModal() {
+    document.getElementById("verifyModal").style.display = "none";
+}
+function resetVerifyModal() {
+    document.getElementById("verifyDropzone").style.display = "";
+    document.getElementById("verifyStatus").style.display   = "none";
+    document.getElementById("verifyStatus").innerHTML       = "";
+    document.getElementById("verifyBtnReset").style.display = "none";
+    document.getElementById("verifyFile").value             = "";
+}
+
+function handleVerifyDrop(e) {
+    e.preventDefault();
+    document.getElementById("verifyDropzone").style.borderColor = "#adb5bd";
+    const file = e.dataTransfer.files[0];
+    if (file) handleVerifyFile(file);
+}
+
+async function handleVerifyFile(file) {
+    if (!file || file.type !== "application/pdf") {
+        showVerifyStatus("error", "❌ Por favor, selecione um arquivo PDF válido.");
+        return;
+    }
+
+    // Esconde dropzone, mostra progresso
+    document.getElementById("verifyDropzone").style.display = "none";
+    showVerifyStatus("loading",
+        "<div style=\'text-align:center; padding:10px;\'>"
+      + "<div style=\'font-size:1.8em;\'>⏳</div>"
+      + "<div style=\'margin-top:8px; font-weight:500;\'>Calculando hash SHA-256...</div>"
+      + "<div style=\'font-size:.8em; color:#6c757d;\'>" + escHtml(file.name) + "</div>"
+      + "</div>"
+    );
+
+    try {
+        // Calcula SHA-256 via Web Crypto API (nativo no navegador)
+        const buffer = await file.arrayBuffer();
+        const hashBuf = await crypto.subtle.digest("SHA-256", buffer);
+        const hash = Array.from(new Uint8Array(hashBuf))
+                         .map(b => b.toString(16).padStart(2, "0"))
+                         .join("");
+
+        showVerifyStatus("loading",
+            "<div style=\'text-align:center; padding:10px;\'>"
+          + "<div style=\'font-size:1.8em;\'>🔍</div>"
+          + "<div style=\'margin-top:8px; font-weight:500;\'>Consultando base de dados...</div>"
+          + "</div>"
+        );
+
+        const fd = new FormData();
+        fd.append("hash", hash);
+        fd.append("_glpi_csrf_token", "' . Session::getNewCSRFToken() . '");
+
+        const resp = await fetch("term.php?action=verify_hash", { method: "POST", body: fd });
+        const json = await resp.json();
+
+        document.getElementById("verifyBtnReset").style.display = "";
+
+        if (!json.valid) {
+            showVerifyStatus("error",
+                "<div style=\'border-left:4px solid #dc3545; padding:12px 16px; background:#fff5f5; border-radius:4px;\'>"
+              + "<div style=\'font-size:1.4em;\'>❌</div>"
+              + "<div style=\'font-weight:600; color:#dc3545; margin:6px 0 4px;\'>Documento inválido</div>"
+              + "<div style=\'font-size:.9em; color:#495057;\'>"
+              + escHtml(json.msg || json.error || "Hash não encontrado na base de dados.")
+              + "</div>"
+              + "<div style=\'margin-top:10px; font-size:.75em; color:#6c757d; word-break:break-all;\'>"
+              + "SHA-256: " + escHtml(hash)
+              + "</div>"
+              + "</div>"
+            );
+        } else {
+            const statusLabels = { pending: "⏳ Pendente", signed: "✅ Assinado", revoked: "🔴 Revogado" };
+            const statusColors = { pending: "#ffc107", signed: "#198754", revoked: "#6c757d" };
+            const st = json.status;
+
+            showVerifyStatus("success",
+                "<div style=\'border-left:4px solid #198754; padding:12px 16px; background:#f0fff4; border-radius:4px;\'>"
+              + "<div style=\'font-size:1.4em;\'>✅</div>"
+              + "<div style=\'font-weight:600; color:#198754; margin:6px 0 10px;\'>Documento autêntico e íntegro</div>"
+              + "<table style=\'width:100%; font-size:.88em; border-collapse:collapse;\'>"
+              + row2("Nº do Termo",    "#" + json.id)
+              + row2("Status",         "<span style=\'color:" + (statusColors[st]||"#333") + "; font-weight:600;\'>" + escHtml(statusLabels[st]||st) + "</span>")
+              + row2("Computador",     escHtml(json.computer))
+              + row2("Número de série",escHtml(json.serial))
+              + row2("Setor",          escHtml(json.entity))
+              + row2("Responsável",    escHtml(json.responsavel))
+              + row2("Emitido por",    escHtml(json.emissor))
+              + row2("Criado em",      escHtml(json.date_creation))
+              + row2("Assinado em",    escHtml(json.date_signed))
+              + "</table>"
+              + "<div style=\'margin-top:10px; font-size:.72em; color:#6c757d; word-break:break-all;\'>"
+              + "SHA-256: " + escHtml(json.hash)
+              + "</div>"
+              + "</div>"
+            );
+        }
+    } catch (err) {
+        showVerifyStatus("error", "❌ Erro ao processar o arquivo: " + escHtml(err.message));
+        document.getElementById("verifyBtnReset").style.display = "";
+    }
+}
+
+function row2(label, value) {
+    return "<tr>"
+         + "<td style=\'padding:3px 8px 3px 0; color:#6c757d; white-space:nowrap; vertical-align:top;\'>" + label + ":</td>"
+         + "<td style=\'padding:3px 0; font-weight:500;\'>" + value + "</td>"
+         + "</tr>";
+}
+function escHtml(str) {
+    return String(str ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function showVerifyStatus(type, html) {
+    const el = document.getElementById("verifyStatus");
+    el.style.display = "";
+    el.innerHTML = html;
+}
+
+// Fecha modal ao clicar fora
+document.getElementById("verifyModal").addEventListener("click", function(e) {
+    if (e.target === this) closeVerifyModal();
+});
+</script>
+';
+// ─────────────────────────────────────────────────────────────────────────────
 
 Html::footer();
