@@ -115,6 +115,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['item_type'])) {
             if ($users_id  > 0) $upd['users_id']  = $users_id;
             if ($states_id > 0) $upd['states_id'] = $states_id;
             if (count($upd) > 1) (new Phone())->update($upd);
+
+            // Vincula a linha ao celular em glpi_items_lines
+            if ($lines_id > 0) {
+                global $DB;
+                // Remove vínculo anterior deste celular com qualquer linha
+                $DB->delete('glpi_items_lines', ['itemtype' => 'Phone', 'items_id' => $phones_id]);
+                // Cria novo vínculo
+                $DB->insert('glpi_items_lines', [
+                    'lines_id'  => $lines_id,
+                    'itemtype'  => 'Phone',
+                    'items_id'  => $phones_id,
+                ]);
+            }
         }
 
         $newId = PluginTermosTerm::createTerm($computers_id, $item_type, $phones_id, $lines_id);

@@ -41,7 +41,7 @@ if (isset($_GET['baixar'])) {
 }
 
 // Busca dados para exibir na tela de confirmação
-$data         = PluginTermosTerm::getComputerWithUser((int)$term->fields['computers_id']);
+$data         = PluginTermosTerm::getItemWithUser($term);
 $nomeCompleto = trim(($data['firstname'] ?? '') . ' ' . ($data['realname'] ?? '')) ?: ($data['username'] ?? '');
 $dataAssinado = $term->fields['date_signed']
     ? date('d/m/Y \à\s H:i', strtotime($term->fields['date_signed']))
@@ -97,6 +97,9 @@ Html::header('Termo Assinado', $_SERVER['PHP_SELF'], 'tools', 'PluginTermosMenu'
         <div class="confirmacao-info">
             <table>
                 <tr><th>Equipamento</th><td><?= htmlspecialchars($data['computer_name'] ?? '-') ?></td></tr>
+                <?php if (($data['item_type'] ?? '') === 'Phone' && ($data['line_number'] ?? '-') !== '-'): ?>
+                <tr><th>Linha Telefônica</th><td><?= htmlspecialchars($data['line_number']) ?></td></tr>
+                <?php endif; ?>
                 <tr><th>Responsável</th><td><?= htmlspecialchars($nomeCompleto) ?></td></tr>
                 <tr><th>Assinado em</th><td><?= $dataAssinado ?></td></tr>
                 <tr><th>Hash SHA-256</th><td style="font-size:0.75em; word-break:break-all;"><?= htmlspecialchars($term->fields['pdf_hash'] ?? '-') ?></td></tr>
