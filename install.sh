@@ -87,8 +87,12 @@ success "Arquivos copiados."
 # ── 5. Página pública de assinatura ──────────────────────────────────────────
 info "Instalando página pública de assinatura em '$PUBLIC_DIR'..."
 if [ -d "$PUBLIC_DIR" ]; then
-    cp "$PLUGIN_DIR/term_sign.php" "$PUBLIC_DIR/term_sign.php"
-    success "Arquivo '$PUBLIC_DIR/term_sign.php' criado."
+    if [ -f "$PLUGIN_DIR/term_sign.php" ]; then
+        cp "$PLUGIN_DIR/term_sign.php" "$PUBLIC_DIR/term_sign.php"
+        success "Arquivo '$PUBLIC_DIR/term_sign.php' criado."
+    else
+        warn "Arquivo 'term_sign.php' não encontrado no plugin. Copie manualmente após confirmar o arquivo."
+    fi
 else
     warn "Diretório '$PUBLIC_DIR' não encontrado. Copie manualmente:"
     warn "  cp $PLUGIN_DIR/term_sign.php $PUBLIC_DIR/term_sign.php"
@@ -105,12 +109,26 @@ mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" \
     && success "Tabela 'glpi_plugin_termos_terms' criada (ou já existia)." \
     || error "Falha ao executar SQL. Verifique '$PLUGIN_DIR/sql/install.sql'."
 
+# ── 7b. Migração (adiciona colunas phones_id / lines_id / item_type se faltarem) ──
+if mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" \
+       -e "SHOW COLUMNS FROM glpi_plugin_termos_terms LIKE 'item_type'" 2>/dev/null \
+   | grep -q 'item_type'; then
+    info "Colunas de celular já existem — migração dispensada."
+else
+    info "Executando migrate_phones.sql para adicionar suporte a celulares..."
+    mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" \
+        < "$PLUGIN_DIR/sql/migrate_phones.sql" \
+        && success "Migração concluída." \
+        || warn "Falha na migração. Execute manualmente: $PLUGIN_DIR/sql/migrate_phones.sql"
+fi
+
 # ── 8. Permissões ─────────────────────────────────────────────────────────────
 info "Ajustando permissões..."
 chown -R "$WEB_USER":"$WEB_USER" "$PLUGIN_DIR" 2>/dev/null || \
     warn "Não foi possível alterar o dono. Execute manualmente: chown -R $WEB_USER:$WEB_USER $PLUGIN_DIR"
 
-chmod -R 755 "$PLUGIN_DIR"
+find "$PLUGIN_DIR" -type d -exec chmod 755 {} \;
+find "$PLUGIN_DIR" -type f -exec chmod 644 {} \;
 chmod -R 775 "$PLUGIN_DIR/config"
 
 # Diretório de PDFs gerados pelo GLPI
@@ -123,10 +141,9 @@ success "Permissões ajustadas."
 # ── 9. Dependências PHP (TCPDF já incluso em lib/) ───────────────────────────
 if command -v composer &>/dev/null; then
     info "Composer encontrado. Instalando dependências em vendor/..."
-    cd "$PLUGIN_DIR" && composer install --no-dev --optimize-autoloader 2>/dev/null \
+    (cd "$PLUGIN_DIR" && composer install --no-dev --optimize-autoloader 2>/dev/null) \
         && success "composer install concluído." \
         || warn "Erro no composer. O plugin usa lib/tcpdf/ como fallback."
-    cd - &>/dev/null
 else
     info "Composer não encontrado — usando TCPDF incluído em lib/tcpdf/ (sem ação necessária)."
 fi
