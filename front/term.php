@@ -17,27 +17,34 @@ if (isset($_GET['action']) && $_GET['action'] === 'verify_hash' && $_SERVER['REQ
     global $DB;
     $hash = strtolower($hash);
 
-    // Busca em termos de responsabilidade
-    $it = $DB->request([
-        'SELECT' => [
-            't.id', 't.status', 't.date_creation', 't.date_signed', 't.pdf_hash',
-            'c.name AS computer_name', 'c.serial',
-            'u.firstname', 'u.realname', 'u.name AS username',
-            'e.completename AS entity',
-            'i.firstname AS issuer_firstname', 'i.realname AS issuer_realname', 'i.name AS issuer_username',
-        ],
-        'FROM'      => ['glpi_plugin_termos_terms AS t'],
-        'LEFT JOIN' => [
-            'glpi_computers AS c' => ['ON' => ['t' => 'computers_id', 'c' => 'id']],
-            'glpi_users AS u'     => ['ON' => ['t' => 'users_id',     'u' => 'id']],
-            'glpi_entities AS e'  => ['ON' => ['t' => 'entities_id',  'e' => 'id']],
-            'glpi_users AS i'     => ['ON' => ['t' => 'issuer_id',    'i' => 'id']],
-        ],
-        'WHERE' => ['t.pdf_hash' => $hash],
-        'LIMIT' => 1,
-    ]);
+    $joins = [
+        'glpi_computers AS c' => ['ON' => ['t' => 'computers_id', 'c' => 'id']],
+        'glpi_users AS u'     => ['ON' => ['t' => 'users_id',     'u' => 'id']],
+        'glpi_entities AS e'  => ['ON' => ['t' => 'entities_id',  'e' => 'id']],
+        'glpi_users AS i'     => ['ON' => ['t' => 'issuer_id',    'i' => 'id']],
+    ];
+    $select = [
+        't.id', 't.status', 't.date_creation', 't.date_signed',
+        'c.name AS computer_name', 'c.serial',
+        'u.firstname', 'u.realname', 'u.name AS username',
+        'e.completename AS entity',
+        'i.firstname AS issuer_firstname', 'i.realname AS issuer_realname', 'i.name AS issuer_username',
+    ];
 
+    // Tenta primeiro pelo hash do termo de responsabilidade
+    $it  = $DB->request(['SELECT' => $select, 'FROM' => ['glpi_plugin_termos_terms AS t'],
+                         'LEFT JOIN' => $joins, 'WHERE' => ['t.pdf_hash' => $hash], 'LIMIT' => 1]);
     $row = $it->current();
+    $docType = 'Termo de Responsabilidade';
+
+    // Se não achou, tenta pelo hash do termo de devolução
+    if (!$row) {
+        $it  = $DB->request(['SELECT' => $select, 'FROM' => ['glpi_plugin_termos_terms AS t'],
+                             'LEFT JOIN' => $joins, 'WHERE' => ['t.devolution_pdf_hash' => $hash], 'LIMIT' => 1]);
+        $row = $it->current();
+        $docType = 'Termo de Devolução';
+    }
+
     if (!$row) {
         echo json_encode(['valid' => false, 'msg' => 'Nenhum documento encontrado com este hash. O arquivo pode ter sido adulterado ou não pertence a este sistema.']);
         exit;
@@ -48,6 +55,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'verify_hash' && $_SERVER['REQ
 
     echo json_encode([
         'valid'          => true,
+        'doc_type'       => $docType,
         'id'             => (int)$row['id'],
         'status'         => $row['status'],
         'computer'       => $row['computer_name'] ?? '-',
@@ -473,6 +481,7 @@ async function handleVerifyFile(file) {
               + "<div style=\'font-size:1.4em;\'>✅</div>"
               + "<div style=\'font-weight:600; color:#198754; margin:6px 0 10px;\'>Documento autêntico e íntegro</div>"
               + "<table style=\'width:100%; font-size:.88em; border-collapse:collapse;\'>"
+              + row2("Tipo",           "<strong>" + escHtml(json.doc_type) + "</strong>")
               + row2("Nº do Termo",    "#" + json.id)
               + row2("Status",         "<span style=\'color:" + (statusColors[st]||"#333") + "; font-weight:600;\'>" + escHtml(statusLabels[st]||st) + "</span>")
               + row2("Computador",     escHtml(json.computer))
