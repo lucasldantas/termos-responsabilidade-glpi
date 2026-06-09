@@ -1,0 +1,23 @@
+# Dependências (instalar via composer)
+/vendor/
+
+# Arquivos gerados em runtime — não versionar
+/config/settings.json
+/config/logo.*
+/config/*.json
+
+# PDFs gerados
+/files/
+
+# Logs e cache
+*.log
+*.cache
+
+# Sistemas operacionais
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
