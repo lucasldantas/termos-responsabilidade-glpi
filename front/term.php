@@ -254,20 +254,20 @@ echo '</p>';
 Html::printPager($start, $total, $baseUrl . 'start=', $limit);
 
 // Tabela
-echo '<div style="background:#fff; border-radius:6px; border:1px solid #dee2e6; overflow:hidden; margin-top:10px;">';
-echo '<table class="table table-bordered table-hover" style="margin:0; background:#fff;">';
+echo '<div style="background:#fff; border-radius:6px; border:1px solid #dee2e6; overflow-x:auto; margin-top:10px; -webkit-overflow-scrolling:touch;">';
+echo '<table class="table table-bordered table-hover" style="margin:0; background:#fff; min-width:900px;">';
 echo '<thead style="background:#f8f9fa;">
 <tr>
-    <th style="width:50px;">#</th>
-    <th>Computador</th>
-    <th>Série</th>
-    <th>Responsável</th>
-    <th>Emitido por</th>
-    <th>Setor</th>
-    <th>Criado em</th>
-    <th>Assinado em</th>
-    <th style="width:100px;">Status</th>
-    <th>Ações</th>
+    <th style="width:45px; white-space:nowrap;">#</th>
+    <th style="white-space:nowrap;">Computador</th>
+    <th style="white-space:nowrap;">Série</th>
+    <th style="white-space:nowrap;">Responsável</th>
+    <th style="white-space:nowrap;">Emitido por</th>
+    <th style="white-space:nowrap;">Setor</th>
+    <th style="white-space:nowrap;">Criado em</th>
+    <th style="white-space:nowrap;">Assinado em</th>
+    <th style="white-space:nowrap; width:110px;">Status</th>
+    <th style="white-space:nowrap;">Ações</th>
 </tr></thead><tbody>';
 
 $count = 0;
@@ -278,16 +278,16 @@ foreach ($iterator as $row) {
     $criado       = $row['date_creation'] ? date('d/m/Y H:i', strtotime($row['date_creation'])) : '-';
 
     echo '<tr style="background:#fff;">';
-    echo '<td>' . (int)$row['id'] . '</td>';
-    echo '<td>' . htmlspecialchars($row['computer_name'] ?? '-') . '</td>';
-    echo '<td>' . htmlspecialchars($row['serial'] ?? '-') . '</td>';
-    echo '<td>' . $nomeCompleto . '</td>';
+    echo '<td style="white-space:nowrap;">' . (int)$row['id'] . '</td>';
+    echo '<td style="white-space:nowrap;">' . htmlspecialchars($row['computer_name'] ?? '-') . '</td>';
+    echo '<td style="white-space:nowrap;">' . htmlspecialchars($row['serial'] ?? '-') . '</td>';
+    echo '<td style="white-space:nowrap;">' . $nomeCompleto . '</td>';
     $issuerNome = htmlspecialchars(trim(($row['issuer_firstname'] ?? '') . ' ' . ($row['issuer_realname'] ?? '')) ?: ($row['issuer_username'] ?? '-'));
-    echo '<td>' . $issuerNome . '</td>';
-    echo '<td>' . htmlspecialchars($row['entity'] ?? '-') . '</td>';
-    echo '<td>' . $criado . '</td>';
-    echo '<td>' . $assinado . '</td>';
-    echo '<td>' . PluginTermosTerm::getStatusLabel($row['status']) . '</td>';
+    echo '<td style="white-space:nowrap;">' . $issuerNome . '</td>';
+    echo '<td style="white-space:nowrap;">' . htmlspecialchars($row['entity'] ?? '-') . '</td>';
+    echo '<td style="white-space:nowrap;">' . $criado . '</td>';
+    echo '<td style="white-space:nowrap;">' . $assinado . '</td>';
+    echo '<td style="white-space:nowrap;">' . PluginTermosTerm::getStatusLabel($row['status']) . '</td>';
     echo '<td style="white-space:nowrap;">';
 
     if ($row['status'] === 'pending') {
