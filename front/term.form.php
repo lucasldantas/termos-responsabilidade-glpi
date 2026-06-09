@@ -85,10 +85,18 @@ if (isset($_GET['get_phone'])) {
             }
         }
         $row['email'] = $email;
+
+        // Linha associada via glpi_items_lines
+        $row['lines_id'] = 0;
+        foreach ($DB->request(['SELECT' => ['lines_id'], 'FROM' => 'glpi_items_lines',
+                               'WHERE' => ['itemtype' => 'Phone', 'items_id' => $pid], 'LIMIT' => 1]) as $lr) {
+            $row['lines_id'] = (int)$lr['lines_id'];
+        }
+
         echo json_encode($row);
         exit;
     }
-    echo json_encode(['users_id' => 0, 'states_id' => 0, 'email' => '']);
+    echo json_encode(['users_id' => 0, 'states_id' => 0, 'lines_id' => 0, 'email' => '']);
     exit;
 }
 
@@ -335,12 +343,17 @@ $(document).ready(function () {
         });
     });
 
-    // Celular selecionado → preenche usuário/status/email
+    // Celular selecionado → preenche usuário/status/email/linha
     $('#phones_id').on('change', function () {
         const pid = $(this).val();
         if (!pid) { clearUser(); return; }
         $.getJSON(window.location.pathname + '?get_phone=1&id=' + pid, function (data) {
             prefillUser(data);
+            if (data.lines_id > 0) {
+                $('#lines_id').val(data.lines_id).trigger('change');
+            } else {
+                $('#lines_id').val(null).trigger('change');
+            }
         });
     });
 
