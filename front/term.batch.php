@@ -8,6 +8,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'send_one' && $_SERVER['REQUES
     header('Content-Type: application/json');
     $computers_id = (int)($_POST['computers_id'] ?? 0);
     $users_id     = (int)($_POST['users_id']     ?? 0);
+    $states_id    = (int)($_POST['states_id']    ?? 0);
     $customEmail  = trim($_POST['email']          ?? '');
 
     if (!$computers_id) {
@@ -19,10 +20,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'send_one' && $_SERVER['REQUES
         exit;
     }
     try {
-        if ($users_id > 0) {
-            $computer = new Computer();
-            $computer->update(['id' => $computers_id, 'users_id' => $users_id]);
-        }
+        $upd = ['id' => $computers_id];
+        if ($users_id  > 0) $upd['users_id']  = $users_id;
+        if ($states_id > 0) $upd['states_id'] = $states_id;
+        if (count($upd) > 1) (new Computer())->update($upd);
+
         $newId = PluginTermosTerm::createTerm($computers_id);
         PluginTermosTerm::sendSignEmail($newId, $customEmail);
         $data = PluginTermosTerm::getComputerWithUser($computers_id);
@@ -87,10 +89,16 @@ foreach ($iterUsers as $row) {
     ];
 }
 
+// ── Status ────────────────────────────────────────────────────────────────────
+$iterStates = $DB->request(['SELECT' => ['id', 'name'], 'FROM' => 'glpi_states', 'ORDERBY' => ['name ASC']]);
+$states = [];
+foreach ($iterStates as $row) { $states[(int)$row['id']] = $row['name']; }
+
 $computersJson         = json_encode($computers,         JSON_UNESCAPED_UNICODE);
 $computersDetailedJson = json_encode($computersDetailed, JSON_UNESCAPED_UNICODE);
 $usersJson             = json_encode($users,             JSON_UNESCAPED_UNICODE);
 $usersDetailedJson     = json_encode($usersDetailed,     JSON_UNESCAPED_UNICODE);
+$statesJson            = json_encode($states,            JSON_UNESCAPED_UNICODE);
 ?>
 
 <div class="container-fluid" style="max-width:1000px; margin:30px auto; padding:0 20px;">
@@ -136,10 +144,11 @@ $usersDetailedJson     = json_encode($usersDetailed,     JSON_UNESCAPED_UNICODE)
             <table class="table table-bordered" style="margin:0;" id="batch-table">
                 <thead style="background:#f8f9fa;">
                     <tr>
-                        <th style="width:35%;">Computador</th>
-                        <th style="width:28%;">Usuário Responsável</th>
-                        <th style="width:28%;">E-mail</th>
-                        <th style="width:9%;"></th>
+                        <th style="width:30%;">Computador</th>
+                        <th style="width:18%;">Status</th>
+                        <th style="width:24%;">Usuário Responsável</th>
+                        <th style="width:22%;">E-mail</th>
+                        <th style="width:6%;"></th>
                     </tr>
                 </thead>
                 <tbody id="batch-body">
@@ -185,6 +194,7 @@ const COMPUTERS          = <?= $computersJson ?>;
 const COMPUTERS_DETAILED = <?= $computersDetailedJson ?>;
 const USERS              = <?= $usersJson ?>;
 const USERS_DETAILED     = <?= $usersDetailedJson ?>;
+const STATES             = <?= $statesJson ?>;
 
 // ── Lookup maps for CSV import ────────────────────────────────────────────────
 const COMP_BY_SERIAL = {}; // serial (lower) → id
@@ -223,6 +233,9 @@ function addRow(compId, userId, email) {
             ${buildSelect('batch[' + i + '][computers_id]', COMPUTERS, 'Selecione o computador...', 'sel-comp')}
         </td>
         <td>
+            ${buildSelect('batch[' + i + '][states_id]', STATES, 'Manter atual...', 'sel-state')}
+        </td>
+        <td>
             ${buildSelect('batch[' + i + '][users_id]', USERS, 'Usuário atual da máquina...', 'sel-user')}
         </td>
         <td>
@@ -235,11 +248,16 @@ function addRow(compId, userId, email) {
     `;
     document.getElementById('batch-body').appendChild(tr);
 
-    const $comp = $(tr).find('.sel-comp');
-    const $user = $(tr).find('.sel-user');
+    const $comp  = $(tr).find('.sel-comp');
+    const $state = $(tr).find('.sel-state');
+    const $user  = $(tr).find('.sel-user');
 
     $comp.select2({
         placeholder: 'Selecione o computador...', allowClear: true, width: '100%',
+        language: { noResults: () => 'Nenhum encontrado.', searching: () => 'Buscando...' }
+    });
+    $state.select2({
+        placeholder: 'Manter atual...', allowClear: true, width: '100%',
         language: { noResults: () => 'Nenhum encontrado.', searching: () => 'Buscando...' }
     });
     $user.select2({
@@ -251,7 +269,9 @@ function addRow(compId, userId, email) {
         const cid = $(this).val();
         if (!cid) return;
         $.getJSON('term.form.php?get_computer=1&id=' + cid, function(data) {
-            if (data.users_id > 0) $user.val(data.users_id).trigger('change');
+            if (data.states_id > 0) $state.val(String(data.states_id)).trigger('change');
+            else $state.val(null).trigger('change');
+            if (data.users_id > 0) $user.val(String(data.users_id)).trigger('change');
             const emailInput = tr.querySelector('.inp-email');
             if (data.email) {
                 emailInput.value       = data.email;
@@ -377,11 +397,13 @@ async function startSending() {
     const items = [];
     for (const tr of rows) {
         const compSel  = tr.querySelector('.sel-comp');
+        const stateSel = tr.querySelector('.sel-state');
         const userSel  = tr.querySelector('.sel-user');
         const emailInp = tr.querySelector('.inp-email');
         items.push({
             tr,
             computers_id: compSel  ? compSel.value  : '',
+            states_id:    stateSel ? stateSel.value : '',
             users_id:     userSel  ? userSel.value  : '',
             email:        emailInp ? emailInp.value : '',
         });
@@ -420,6 +442,7 @@ async function startSending() {
         try {
             const body = new URLSearchParams({
                 computers_id:      item.computers_id,
+                states_id:         item.states_id,
                 users_id:          item.users_id,
                 email:             item.email,
                 _glpi_csrf_token:  csrfToken,
