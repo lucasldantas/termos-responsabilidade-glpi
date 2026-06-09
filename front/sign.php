@@ -46,7 +46,7 @@ header('Location: download.php?id=' . $id);
     }
 }
 
-$data         = PluginTermosTerm::getComputerWithUser((int)$term->fields['computers_id']);
+$data         = PluginTermosTerm::getItemWithUser($term);
 $nomeCompleto = trim(($data['firstname'] ?? '') . ' ' . ($data['realname'] ?? '')) ?: ($data['username'] ?? '');
 
 // Configurações dinâmicas
@@ -119,6 +119,16 @@ Html::header('Assinar Termo de Responsabilidade', $_SERVER['PHP_SELF'], 'tools',
                 <td><?= htmlspecialchars($resolveField($cf['field'])) ?></td>
             </tr>
             <?php endforeach; ?>
+            <?php if (($data['item_type'] ?? '') === 'Phone' && ($data['line_number'] ?? '-') !== '-'): ?>
+            <tr>
+                <th>Linha Telefônica</th>
+                <td><?= htmlspecialchars($data['line_number']) ?>
+                    <?php if (!empty($data['line_name']) && $data['line_name'] !== $data['line_number']): ?>
+                        <span style="color:#6c757d; font-size:.9em;">(<?= htmlspecialchars($data['line_name']) ?>)</span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endif; ?>
         </table>
     </div>
 

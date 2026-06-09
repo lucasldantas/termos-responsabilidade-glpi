@@ -191,6 +191,13 @@ class PluginTermosPdf {
             if (!($cf['enabled'] ?? true)) continue;
             $this->row($pdf, $lib, $font, $cf['label'], $this->resolveField($data, $cf['field']));
         }
+        // Linha telefônica (apenas para celulares)
+        if (($data['item_type'] ?? '') === 'Phone' && ($data['line_number'] ?? '-') !== '-') {
+            $lineLabel = ($data['line_name'] ?? '-') !== ($data['line_number'] ?? '-') && ($data['line_name'] ?? '-') !== '-'
+                ? $data['line_number'] . ' (' . $data['line_name'] . ')'
+                : $data['line_number'];
+            $this->row($pdf, $lib, $font, 'Linha Telefonica', $lineLabel);
+        }
         $yLeft = $pdf->GetY();
 
         // Coluna direita — Responsável (campos dinâmicos)
@@ -358,6 +365,12 @@ class PluginTermosPdf {
         foreach ($compFields as $cf) {
             if (!($cf['enabled'] ?? true)) continue;
             $this->row($pdf, $lib, $font, $cf['label'], $this->resolveField($data, $cf['field']));
+        }
+        if (($data['item_type'] ?? '') === 'Phone' && ($data['line_number'] ?? '-') !== '-') {
+            $lineLabel = ($data['line_name'] ?? '-') !== ($data['line_number'] ?? '-') && ($data['line_name'] ?? '-') !== '-'
+                ? $data['line_number'] . ' (' . $data['line_name'] . ')'
+                : $data['line_number'];
+            $this->row($pdf, $lib, $font, 'Linha Telefonica', $lineLabel);
         }
         $yLeft = $pdf->GetY();
 
