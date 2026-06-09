@@ -308,17 +308,12 @@ class PluginTermosPdf {
             ? date('d/m/Y', strtotime($termFields['date_signed']))
             : '-';
 
-        $this->addLogo($pdf, $lib);
-
         // Texto configurável com variáveis
         $devolTexto = $config['devol_texto']
-            ?? "Pelo presente instrumento, a empresa declara ter recebido em devolucao o equipamento acima identificado, anteriormente sob responsabilidade do(a) colaborador(a) identificado(a) neste documento.\n\nO equipamento foi devolvido e inspecionado pelo setor de TI, encerrando-se assim todas as obrigacoes e responsabilidades do(a) colaborador(a) referentes a este equipamento.\n\nEste documento anula o Termo de Responsabilidade anteriormente firmado.";
+            ?? "Pelo presente instrumento, a empresa declara ter recebido em devolucao o equipamento acima identificado, anteriormente sob responsabilidade do(a) colaborador(a) identificado(a) neste documento.\n\nO equipamento foi devolvido e inspecionado pelo setor de TI, encerrando-se assim todas as obrigacoes e responsabilidades do(a) colaborador(a) referentes a este equipamento, salvo eventuais danos identificados na vistoria de recebimento.\n\nEste documento anula o Termo de Responsabilidade anteriormente firmado.";
 
-        $devolRodape   = $config['devol_rodape']     ?? 'Documento emitido pelo setor de TI.';
-        $labelEntregue = $config['devol_entregue_por'] ?? 'Entregue por:';
-        $labelRecebido = $config['devol_recebido_por'] ?? 'Recebido por (TI):';
+        $devolRodape = $config['devol_rodape'] ?? 'Documento emitido pelo setor de TI.';
 
-        // Substitui variáveis no texto
         $vars = [
             '{nome}'            => $nomeCompleto,
             '{computador}'      => $data['computer_name'] ?? '-',
@@ -328,26 +323,15 @@ class PluginTermosPdf {
             '{data_hoje}'       => $hoje,
             '{emissor}'         => $issuerNome,
         ];
-        $devolTexto    = str_replace(array_keys($vars), array_values($vars), $devolTexto);
-        $labelEntregue = str_replace(array_keys($vars), array_values($vars), $labelEntregue);
-        $labelRecebido = str_replace(array_keys($vars), array_values($vars), $labelRecebido);
+        $devolTexto  = str_replace(array_keys($vars), array_values($vars), $devolTexto);
+        $devolRodape = str_replace(array_keys($vars), array_values($vars), $devolRodape);
 
-        // Título
-        $pdf->SetFont($font, 'B', 14);
-        $pdf->Cell(0, 10, $this->enc($lib, 'TERMO DE DEVOLUCAO DE EQUIPAMENTO'), 0, 1, 'C');
-        $pdf->Ln(2);
-
-        // Número e data
-        $pdf->SetFont($font, '', 9);
-        $pdf->Cell(0, 6, $this->enc($lib, 'No ' . $termsId . '  |  Data: ' . $hoje), 0, 1, 'R');
-        $pdf->Ln(4);
-
-        // Campos dinâmicos com defaults para devolução
+        // Campos dinâmicos com defaults
         $compFields = $config['fields_computer'] ?? [
-            ['enabled' => true, 'label' => 'Computador',  'field' => 'computer_name'],
-            ['enabled' => true, 'label' => 'No de Serie', 'field' => 'serial'],
-            ['enabled' => true, 'label' => 'Patrimonio',  'field' => 'patrimonio'],
-            ['enabled' => true, 'label' => 'Setor',       'field' => 'entity'],
+            ['enabled' => true, 'label' => 'Nome',       'field' => 'computer_name'],
+            ['enabled' => true, 'label' => 'Serie',      'field' => 'serial'],
+            ['enabled' => true, 'label' => 'Patrimonio', 'field' => 'patrimonio'],
+            ['enabled' => true, 'label' => 'Setor',      'field' => 'entity'],
         ];
         $userFields = $config['fields_user'] ?? [
             ['enabled' => true, 'label' => 'Nome',     'field' => 'fullname'],
@@ -355,77 +339,91 @@ class PluginTermosPdf {
             ['enabled' => true, 'label' => 'Telefone', 'field' => 'phone'],
         ];
 
-        // Dados do equipamento
-        $pdf->SetFont($font, 'B', 11);
-        $pdf->Cell(0, 8, $this->enc($lib, 'DADOS DO EQUIPAMENTO'), 0, 1);
+        // ── Logo ──────────────────────────────────────────────────────────────
+        $this->addLogo($pdf, $lib);
+
+        // ── Título ────────────────────────────────────────────────────────────
+        $pdf->SetFont($font, 'B', 13);
+        $pdf->Cell(0, 8, $this->enc($lib, 'TERMO DE DEVOLUCAO DE EQUIPAMENTO'), 0, 1, 'C');
+        $pdf->SetFont($font, '', 8);
+        $pdf->Cell(0, 5, $this->enc($lib, 'No ' . $termsId . '   |   ' . $hoje), 0, 1, 'C');
+        $pdf->Ln(3);
+
+        // ── Duas colunas: Equipamento | Responsável ───────────────────────────
+        $colW   = 85;
+        $yStart = $pdf->GetY();
+
+        // Coluna esquerda — Equipamento
+        $this->sectionTitle($pdf, $lib, $font, 'EQUIPAMENTO');
         foreach ($compFields as $cf) {
             if (!($cf['enabled'] ?? true)) continue;
-            $pdf->SetFont($font, 'B', 10); $pdf->Cell(50, 7, $this->enc($lib, $cf['label'] . ':'), 0);
-            $pdf->SetFont($font, '', 10);  $pdf->Cell(0, 7, $this->enc($lib, $this->resolveField($data, $cf['field'])), 0, 1);
+            $this->row($pdf, $lib, $font, $cf['label'], $this->resolveField($data, $cf['field']));
         }
-        $pdf->Ln(3);
+        $yLeft = $pdf->GetY();
 
-        // Dados do responsável
-        $pdf->SetFont($font, 'B', 11);
-        $pdf->Cell(0, 8, $this->enc($lib, 'DADOS DO RESPONSAVEL'), 0, 1);
+        // Coluna direita — Responsável
+        $pdf->SetXY(20 + $colW + 5, $yStart);
+        $this->sectionTitle($pdf, $lib, $font, 'RESPONSAVEL');
         foreach ($userFields as $uf) {
             if (!($uf['enabled'] ?? true)) continue;
-            $pdf->SetFont($font, 'B', 10); $pdf->Cell(60, 7, $this->enc($lib, $uf['label'] . ':'), 0);
-            $pdf->SetFont($font, '', 10);  $pdf->Cell(0, 7, $this->enc($lib, $this->resolveField($data, $uf['field'])), 0, 1);
+            $pdf->SetX(20 + $colW + 5);
+            $this->row($pdf, $lib, $font, $uf['label'], $this->resolveField($data, $uf['field']));
         }
-        $pdf->SetFont($font, 'B', 10); $pdf->Cell(60, 7, $this->enc($lib, 'Data do Recebimento:'), 0);
-        $pdf->SetFont($font, '', 10);  $pdf->Cell(0, 7, $this->enc($lib, $dataAssinado), 0, 1);
+        // Data do recebimento original
+        $pdf->SetX(20 + $colW + 5);
+        $this->row($pdf, $lib, $font, 'Data de recebimento', $dataAssinado);
+        $yRight = $pdf->GetY();
+
+        $pdf->SetY(max($yLeft, $yRight) + 3);
+
+        // ── Declaração ────────────────────────────────────────────────────────
+        $this->sectionTitle($pdf, $lib, $font, 'DECLARACAO');
+        $pdf->SetFont($font, '', 9);
+        $pdf->MultiCell(0, 5, $this->enc($lib, $devolTexto), 0, 'J');
         $pdf->Ln(3);
 
-        // Texto da declaração
-        $pdf->SetFont($font, 'B', 11);
-        $pdf->Cell(0, 8, $this->enc($lib, 'DECLARACAO'), 0, 1);
-        $pdf->SetFont($font, '', 10);
-        $pdf->MultiCell(0, 6, $this->enc($lib, $devolTexto), 0, 'L');
-        $pdf->Ln(8);
+        // ── Rodapé legal ──────────────────────────────────────────────────────
+        $pdf->SetFont($font, 'I', 7);
+        $pdf->MultiCell(0, 4, $this->enc($lib, $devolRodape), 0, 'C');
+        $pdf->Ln(4);
 
-        // Assinaturas
-        $pdf->Ln(10);
-        // Linhas de assinatura
-        $pdf->Cell(85, 0, '', 'T');
-        $pdf->Cell(10, 0, '', 0);
-        $pdf->Cell(0,  0, '', 'T', 1);
-        $pdf->Ln(2);
-        // Nome abaixo da linha
-        $pdf->SetFont($font, '', 9);
-        $pdf->Cell(85, 5, $this->enc($lib, $nomeCompleto), 0);
-        $pdf->Cell(10, 5, '', 0);
-        $pdf->Cell(0,  5, $this->enc($lib, $issuerNome), 0, 1);
-        // Label abaixo do nome
-        $pdf->SetFont($font, 'I', 8);
-        $pdf->Cell(85, 5, $this->enc($lib, $labelEntregue), 0);
-        $pdf->Cell(10, 5, '', 0);
-        $pdf->Cell(0,  5, $this->enc($lib, $labelRecebido), 0, 1);
-        // Data
-        $pdf->SetFont($font, '', 9);
-        $pdf->Cell(85, 5, $this->enc($lib, 'Data: ' . $hoje), 0);
-        $pdf->Cell(10, 5, '', 0);
-        $pdf->Cell(0,  5, $this->enc($lib, 'Data: ' . $hoje), 0, 1);
-        $pdf->Ln(8);
+        // ── Emissão do Termo (sem assinaturas) ────────────────────────────────
+        $pdf->SetFillColor(245, 247, 250);
+        $pdf->SetFont($font, 'B', 8);
+        $pdf->Cell(0, 6, $this->enc($lib, '  EMISSAO DO TERMO'), 0, 1, 'L', true);
+        $pdf->Ln(1);
+        $pdf->SetFont($font, 'B', 8);
+        $pdf->Cell(35, 5, $this->enc($lib, 'Emitido por:'), 0);
+        $pdf->SetFont($font, '', 8);
+        $pdf->Cell(0, 5, $this->enc($lib, $issuerNome), 0, 1);
+        $pdf->SetFont($font, 'B', 8);
+        $pdf->Cell(35, 5, $this->enc($lib, 'Data de emissao:'), 0);
+        $pdf->SetFont($font, '', 8);
+        $pdf->Cell(0, 5, $this->enc($lib, $hoje), 0, 1);
+        $pdf->Ln(3);
 
-        // Rodapé
-        $pdf->SetFont($font, 'I', 8);
-        $pdf->MultiCell(0, 5, $this->enc($lib, $devolRodape), 0, 'J');
-
-        // Manifesto de auditoria
+        // ── Manifesto de Auditoria ────────────────────────────────────────────
         $pdf->AddPage();
         $pdf->SetFont($font, 'B', 13);
-        $pdf->Cell(0, 10, $this->enc($lib, 'MANIFESTO DE AUDITORIA'), 0, 1, 'C');
+        $pdf->Cell(0, 10, $this->enc($lib, 'MANIFESTO DE AUDITORIA ELETRONICA'), 0, 1, 'C');
         $pdf->Ln(3);
-        $pdf->SetFont($font, '', 9);
         foreach ([
             'ID do Termo'             => (string)$termsId,
             'Data da Devolucao'       => $agora,
             'Termo Original Assinado' => $dataAssinado,
+            'Emitido por'             => $issuerNome,
             'IP do Solicitante'       => $_SERVER['REMOTE_ADDR'] ?? 'N/A',
+            'Base Legal'              => 'MP n. 2.200-2/2001, art. 10, par. 2 e Lei n. 14.063/2020',
         ] as $label => $value) {
             $pdf->SetFont($font, 'B', 9); $pdf->Cell(60, 6, $this->enc($lib, $label . ':'), 0);
             $pdf->SetFont($font, '', 9);  $pdf->MultiCell(0, 6, $this->enc($lib, $value), 0);
         }
+
+        $pdf->Ln(5);
+        $pdf->SetFont($font, 'I', 8);
+        $pdf->MultiCell(0, 5, $this->enc($lib,
+            'O hash SHA-256 deste arquivo e calculado e registrado no banco de dados do sistema imediatamente ' .
+            'apos a geracao, servindo como prova de integridade e nao-repudio do documento.'
+        ), 0, 'J');
     }
 }
