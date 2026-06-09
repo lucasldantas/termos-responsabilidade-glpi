@@ -77,17 +77,21 @@ if [ -d "$PLUGIN_DIR" ]; then
     cp -a "$PLUGIN_DIR" "${PLUGIN_DIR}.bak_$(date +%Y%m%d%H%M%S)"
 fi
 
-cp -a "$SCRIPT_DIR" "$PLUGIN_DIR"
+mkdir -p "$PLUGIN_DIR"
+# Copia o conteúdo do diretório (não o diretório em si), excluindo .git e install.sh
+rsync -a --exclude='.git' --exclude='install.sh' --exclude='*.bak_*' \
+    "$SCRIPT_DIR/" "$PLUGIN_DIR/" 2>/dev/null \
+|| { cp -a "$SCRIPT_DIR/." "$PLUGIN_DIR/"; rm -rf "$PLUGIN_DIR/.git" "$PLUGIN_DIR/install.sh"; }
 success "Arquivos copiados."
 
 # ── 5. Página pública de assinatura ──────────────────────────────────────────
 info "Instalando página pública de assinatura em '$PUBLIC_DIR'..."
 if [ -d "$PUBLIC_DIR" ]; then
-    cp "$PLUGIN_DIR/public_sign_standalone.php" "$PUBLIC_DIR/term_sign.php"
+    cp "$PLUGIN_DIR/term_sign.php" "$PUBLIC_DIR/term_sign.php"
     success "Arquivo '$PUBLIC_DIR/term_sign.php' criado."
 else
     warn "Diretório '$PUBLIC_DIR' não encontrado. Copie manualmente:"
-    warn "  cp $PLUGIN_DIR/public_sign_standalone.php $PUBLIC_DIR/term_sign.php"
+    warn "  cp $PLUGIN_DIR/term_sign.php $PUBLIC_DIR/term_sign.php"
 fi
 
 # ── 6. Cria diretório de config ───────────────────────────────────────────────

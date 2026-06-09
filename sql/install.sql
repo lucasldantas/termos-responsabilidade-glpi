@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS `glpi_plugin_termos_terms` (
     `devolution_pdf_hash`  VARCHAR(64)              DEFAULT NULL  COMMENT 'SHA-256 do PDF de devolução',
     PRIMARY KEY (`id`),
     KEY `computers_id`         (`computers_id`),
+    KEY `phones_id`            (`phones_id`),
+    KEY `item_type`            (`item_type`),
     KEY `users_id`             (`users_id`),
     KEY `entities_id`          (`entities_id`),
     KEY `issuer_id`            (`issuer_id`),
