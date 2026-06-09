@@ -21,9 +21,11 @@ if (!in_array($term->fields['status'], ['signed', 'revoked'])) {
 
 global $DB;
 
+$itemType = $term->fields['item_type'] ?? 'Computer';
+
 // ── 1. Gera PDF PRIMEIRO (antes de qualquer outra ação) ──────────────────────
 if (empty($term->fields['devolution_pdf_path']) || !file_exists($term->fields['devolution_pdf_path'])) {
-    $data    = PluginTermosTerm::getComputerWithUser((int)$term->fields['computers_id']);
+    $data    = PluginTermosTerm::getItemWithUser($term);
     $pdfGen  = new PluginTermosPdf();
     $pdfPath = $pdfGen->generateDevolution($data, $id, $term->fields, (int)($_SESSION['glpiID'] ?? 0));
     $hash    = hash_file('sha256', $pdfPath);
@@ -62,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_email'])) {
         $emailErr = 'Endereço de e-mail inválido.';
     } else {
         try {
-            $data         = PluginTermosTerm::getComputerWithUser((int)$term->fields['computers_id']);
+            $data         = PluginTermosTerm::getItemWithUser($term);
             $nomeCompleto = trim(($data['firstname'] ?? '') . ' ' . ($data['realname'] ?? '')) ?: ($data['username'] ?? '');
             $pdfPath      = $term->fields['devolution_pdf_path'];
 
@@ -105,21 +107,21 @@ $inventMsg = '';
 $inventErr = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_inventory'])) {
     try {
-        $computers_id = (int)$term->fields['computers_id'];
+        $itemId      = $itemType === 'Phone' ? (int)$term->fields['phones_id'] : (int)$term->fields['computers_id'];
         $newState    = (int)($_POST['states_id']    ?? 0);
         $newLocation = (int)($_POST['locations_id'] ?? 0);
         $newUser     = (int)($_POST['users_id']     ?? 0);
 
         $updateData = [
-            'id'           => $computers_id,
+            'id'           => $itemId,
             'users_id'     => $newUser,
             'states_id'    => $newState,
             'locations_id' => $newLocation,
         ];
 
         if (count($updateData) > 1) {
-            $computer = new Computer();
-            $computer->update($updateData);
+            $item = $itemType === 'Phone' ? new Phone() : new Computer();
+            $item->update($updateData);
             $inventMsg = 'Inventário atualizado com sucesso!';
         } else {
             $inventMsg = 'Nenhuma alteração selecionada.';
@@ -130,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_inventory'])) 
 }
 
 // ── 5. Dados para exibição ────────────────────────────────────────────────────
-$data         = PluginTermosTerm::getComputerWithUser((int)$term->fields['computers_id']);
+$data         = PluginTermosTerm::getItemWithUser($term);
 $nomeCompleto = trim(($data['firstname'] ?? '') . ' ' . ($data['realname'] ?? '')) ?: ($data['username'] ?? '-');
 $dataDevol    = !empty($term->fields['devolution_date'])
     ? date('d/m/Y \à\s H:i', strtotime($term->fields['devolution_date']))
@@ -145,12 +147,14 @@ if (!empty($term->fields['users_id'])) {
     }
 }
 
-// Dados atuais do computador (status, localização e usuário)
+// Dados atuais do item (status, localização e usuário)
 $computerRow = [];
+$itemTable = $itemType === 'Phone' ? 'glpi_phones' : 'glpi_computers';
+$itemId    = $itemType === 'Phone' ? (int)$term->fields['phones_id'] : (int)$term->fields['computers_id'];
 $iterComp = $DB->request([
     'SELECT' => ['states_id', 'locations_id', 'users_id'],
-    'FROM'   => 'glpi_computers',
-    'WHERE'  => ['id' => (int)$term->fields['computers_id']],
+    'FROM'   => $itemTable,
+    'WHERE'  => ['id' => $itemId],
     'LIMIT'  => 1,
 ]);
 foreach ($iterComp as $r) { $computerRow = $r; }
@@ -209,6 +213,9 @@ Html::header('Termo de Devolução', $_SERVER['PHP_SELF'], 'tools', 'PluginTermo
             <table class="devol-table">
                 <tr><th>Equipamento</th><td><?= htmlspecialchars($data['computer_name'] ?? '-') ?></td></tr>
                 <tr><th>Número de Série</th><td><?= htmlspecialchars($data['serial'] ?? '-') ?></td></tr>
+                <?php if ($itemType === 'Phone' && ($data['line_number'] ?? '-') !== '-'): ?>
+                <tr><th>Linha Telefônica</th><td><?= htmlspecialchars($data['line_number']) ?></td></tr>
+                <?php endif; ?>
                 <tr><th>Responsável</th><td><?= htmlspecialchars($nomeCompleto) ?></td></tr>
                 <tr><th>Data da Devolução</th><td><?= $dataDevol ?></td></tr>
                 <tr><th>Hash SHA-256</th><td style="font-size:0.72em;"><?= htmlspecialchars($term->fields['devolution_pdf_hash'] ?? '-') ?></td></tr>
@@ -266,7 +273,7 @@ Html::header('Termo de Devolução', $_SERVER['PHP_SELF'], 'tools', 'PluginTermo
 
     <!-- Atualização de inventário -->
     <div class="devol-card">
-        <h4 style="color:#6c757d;">🖥️ Deseja alterar o status dessa máquina no inventário?</h4>
+        <h4 style="color:#6c757d;"><?= $itemType === 'Phone' ? '📱' : '🖥️' ?> Deseja alterar o status <?= $itemType === 'Phone' ? 'desse telefone' : 'dessa máquina' ?> no inventário?</h4>
 
         <?php if (!empty($inventMsg)): ?>
             <div class="alert alert-success">✅ <?= htmlspecialchars($inventMsg) ?></div>

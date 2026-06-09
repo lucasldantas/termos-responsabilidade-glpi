@@ -100,19 +100,33 @@ class PluginTermosTerm extends CommonDBTM {
 
         if (empty($row)) return [];
 
-        // Linha telefônica (opcional)
+        // Linha telefônica: tenta pelo lines_id do termo; se não tiver, busca via glpi_items_lines
         $row['line_number'] = '-';
         $row['line_name']   = '-';
-        if ($lines_id > 0) {
+        $resolvedLinesId    = $lines_id;
+
+        if ($resolvedLinesId <= 0) {
+            $itemLineIt = $DB->request([
+                'SELECT' => ['lines_id'],
+                'FROM'   => 'glpi_items_lines',
+                'WHERE'  => ['itemtype' => 'Phone', 'items_id' => $phones_id],
+                'LIMIT'  => 1,
+            ]);
+            foreach ($itemLineIt as $il) {
+                $resolvedLinesId = (int)$il['lines_id'];
+            }
+        }
+
+        if ($resolvedLinesId > 0) {
             $lineIt = $DB->request([
                 'SELECT' => ['name', 'caller_num'],
                 'FROM'   => 'glpi_lines',
-                'WHERE'  => ['id' => $lines_id, 'is_deleted' => 0],
+                'WHERE'  => ['id' => $resolvedLinesId, 'is_deleted' => 0],
                 'LIMIT'  => 1,
             ]);
             foreach ($lineIt as $lr) {
-                $row['line_number'] = $lr['caller_num'] ?? $lr['name'] ?? '-';
-                $row['line_name']   = $lr['name'] ?? '-';
+                $row['line_number'] = $lr['caller_num'] ?: $lr['name'] ?: '-';
+                $row['line_name']   = $lr['name'] ?: '-';
             }
         }
 

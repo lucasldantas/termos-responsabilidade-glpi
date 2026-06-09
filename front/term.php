@@ -78,6 +78,53 @@ if (($_GET['msg'] ?? '') === 'link_sent') {
     $msg_success = 'Termo criado e link de assinatura enviado por e-mail com sucesso!';
 }
 
+// ── Ações em massa (POST) ─────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
+    $ids    = array_map('intval', $_POST['ids'] ?? []);
+    $action = $_POST['bulk_action'];
+
+    if (!empty($ids)) {
+        if ($action === 'delete' && Session::haveRight('config', READ)) {
+            foreach ($ids as $delId) {
+                $t = new PluginTermosTerm();
+                if ($t->getFromDB($delId)) {
+                    if (!empty($t->fields['pdf_path']) && file_exists($t->fields['pdf_path'])) {
+                        unlink($t->fields['pdf_path']);
+                    }
+                    $t->delete(['id' => $delId], true);
+                }
+            }
+            $msg_success = count($ids) . ' termo(s) excluído(s).';
+        } elseif ($action === 'send_link') {
+            $ok = $err = 0;
+            foreach ($ids as $lid) {
+                try {
+                    $t = new PluginTermosTerm();
+                    if ($t->getFromDB($lid) && $t->fields['status'] === 'pending') {
+                        PluginTermosTerm::sendSignEmail($lid);
+                        $ok++;
+                    }
+                } catch (\Throwable $e) { $err++; }
+            }
+            $msg_success = "Link enviado para {$ok} termo(s).";
+            if ($err) $msg_error = "{$err} envio(s) falharam.";
+        } elseif ($action === 'resend_email') {
+            $ok = $err = 0;
+            foreach ($ids as $rid) {
+                try {
+                    $t = new PluginTermosTerm();
+                    if ($t->getFromDB($rid) && $t->fields['status'] === 'signed') {
+                        PluginTermosTerm::sendTermEmail($rid);
+                        $ok++;
+                    }
+                } catch (\Throwable $e) { $err++; }
+            }
+            $msg_success = "E-mail reenviado para {$ok} termo(s).";
+            if ($err) $msg_error = "{$err} envio(s) falharam.";
+        }
+    }
+}
+
 // Processa exclusão (apenas super-admin)
 if (isset($_GET['delete']) && Session::haveRight('config', READ)) {
     $delId = (int)$_GET['delete'];
@@ -257,11 +304,28 @@ echo '</p>';
 // Paginador topo
 Html::printPager($start, $total, $baseUrl . 'start=', $limit);
 
+// Barra de ações em massa (aparece ao selecionar)
+echo '<div id="bulk-bar" style="display:none; align-items:center; gap:10px; flex-wrap:wrap;
+      background:#e8f0fe; border:1px solid #b6ccfe; border-radius:6px;
+      padding:10px 14px; margin:10px 0;">
+  <span id="bulk-count" style="font-weight:600; color:#0d47a1;"></span>
+  <button type="button" onclick="bulkAction(\'send_link\')" class="btn btn-sm btn-primary">🔗 Enviar Link (pendentes)</button>
+  <button type="button" onclick="bulkAction(\'resend_email\')" class="btn btn-sm btn-info">📧 Reenviar E-mail (assinados)</button>'
+. ($isAdmin ? '<button type="button" onclick="bulkAction(\'delete\')" class="btn btn-sm btn-danger">🗑️ Excluir selecionados</button>' : '')
+. '<button type="button" onclick="clearSelection()" class="btn btn-sm btn-outline-secondary">✕ Limpar seleção</button>
+</div>';
+
+// Form da tabela (ações em massa)
+echo '<form id="bulk-form" method="POST" action="term.php?' . htmlspecialchars(http_build_query(array_filter(['status' => $status_filter, 'search' => $search, 'start' => $start]))) . '">';
+echo '<input type="hidden" name="_glpi_csrf_token" value="' . htmlspecialchars(Session::getNewCSRFToken()) . '">';
+echo '<input type="hidden" name="bulk_action" id="bulk_action_input" value="">';
+
 // Tabela
 echo '<div style="background:#fff; border-radius:6px; border:1px solid #dee2e6; overflow-x:auto; margin-top:10px; -webkit-overflow-scrolling:touch;">';
 echo '<table class="table table-bordered table-hover" style="margin:0; background:#fff; min-width:900px;">';
 echo '<thead style="background:#f8f9fa;">
 <tr>
+    <th style="width:36px; text-align:center;"><input type="checkbox" id="chk-all" title="Selecionar todos"></th>
     <th style="width:45px; white-space:nowrap;">#</th>
     <th style="white-space:nowrap;">Tipo</th>
     <th style="white-space:nowrap;">Equipamento</th>
@@ -286,7 +350,8 @@ foreach ($iterator as $row) {
     $equipSerial  = $isPhone ? ($row['phone_serial'] ?? '-') : ($row['computer_serial'] ?? '-');
     $tipoLabel    = $isPhone ? '📱 Celular' : '💻 Computador';
 
-    echo '<tr style="background:#fff;">';
+    echo '<tr style="background:#fff;" data-status="' . htmlspecialchars($row['status']) . '">';
+    echo '<td style="text-align:center;"><input type="checkbox" class="row-chk" name="ids[]" value="' . (int)$row['id'] . '"></td>';
     echo '<td style="white-space:nowrap;">' . (int)$row['id'] . '</td>';
     echo '<td style="white-space:nowrap; font-size:.85em;">' . $tipoLabel . '</td>';
     echo '<td style="white-space:nowrap;">' . htmlspecialchars($equipNome) . '</td>';
@@ -342,11 +407,66 @@ if ($count === 0) {
 
 echo '</tbody></table>';
 echo '</div>';
+echo '</form>';
 
 // Paginador rodapé
 Html::printPager($start, $total, $baseUrl . 'start=', $limit);
 
 echo '</div>';
+
+echo '
+<script>
+(function() {
+    var chkAll = document.getElementById("chk-all");
+    var bar    = document.getElementById("bulk-bar");
+    var count  = document.getElementById("bulk-count");
+
+    function getChecked() {
+        return document.querySelectorAll(".row-chk:checked");
+    }
+
+    function updateBar() {
+        var checked = getChecked();
+        if (checked.length > 0) {
+            bar.style.display = "flex";
+            count.textContent = checked.length + " selecionado(s)";
+        } else {
+            bar.style.display = "none";
+        }
+        chkAll.indeterminate = checked.length > 0 && checked.length < document.querySelectorAll(".row-chk").length;
+        chkAll.checked = checked.length > 0 && checked.length === document.querySelectorAll(".row-chk").length;
+    }
+
+    chkAll.addEventListener("change", function() {
+        document.querySelectorAll(".row-chk").forEach(function(c) { c.checked = chkAll.checked; });
+        updateBar();
+    });
+
+    document.querySelectorAll(".row-chk").forEach(function(c) {
+        c.addEventListener("change", updateBar);
+    });
+
+    window.clearSelection = function() {
+        document.querySelectorAll(".row-chk").forEach(function(c) { c.checked = false; });
+        chkAll.checked = false;
+        updateBar();
+    };
+
+    window.bulkAction = function(action) {
+        var checked = getChecked();
+        if (!checked.length) return;
+        var msgs = {
+            "delete":       "Excluir os " + checked.length + " termo(s) selecionados? Esta ação não pode ser desfeita.",
+            "send_link":    "Enviar link de assinatura para os " + checked.length + " termo(s) pendentes selecionados?",
+            "resend_email": "Reenviar e-mail para os " + checked.length + " termo(s) assinados selecionados?"
+        };
+        if (!confirm(msgs[action] || "Confirmar ação em massa?")) return;
+        document.getElementById("bulk_action_input").value = action;
+        document.getElementById("bulk-form").submit();
+    };
+})();
+</script>
+';
 
 // ── Modal: Verificar documento ───────────────────────────────────────────────
 echo '
