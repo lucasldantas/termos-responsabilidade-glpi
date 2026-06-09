@@ -161,11 +161,14 @@ $iterator = $DB->request([
     'SELECT' => [
         't.id',
         't.status',
+        't.item_type',
         't.date_creation',
         't.date_signed',
         't.issuer_id',
-        'c.name AS computer_name',
-        'c.serial',
+        'c.name   AS computer_name',
+        'c.serial AS computer_serial',
+        'p.name   AS phone_name',
+        'p.serial AS phone_serial',
         'u.firstname',
         'u.realname',
         'u.name AS username',
@@ -177,6 +180,7 @@ $iterator = $DB->request([
     'FROM'      => ['glpi_plugin_termos_terms AS t'],
     'LEFT JOIN' => [
         'glpi_computers AS c' => ['ON' => ['t' => 'computers_id', 'c' => 'id']],
+        'glpi_phones AS p'    => ['ON' => ['t' => 'phones_id',    'p' => 'id']],
         'glpi_users AS u'     => ['ON' => ['t' => 'users_id',     'u' => 'id']],
         'glpi_entities AS e'  => ['ON' => ['t' => 'entities_id',  'e' => 'id']],
         'glpi_users AS i'     => ['ON' => ['t' => 'issuer_id',    'i' => 'id']],
@@ -259,7 +263,8 @@ echo '<table class="table table-bordered table-hover" style="margin:0; backgroun
 echo '<thead style="background:#f8f9fa;">
 <tr>
     <th style="width:45px; white-space:nowrap;">#</th>
-    <th style="white-space:nowrap;">Computador</th>
+    <th style="white-space:nowrap;">Tipo</th>
+    <th style="white-space:nowrap;">Equipamento</th>
     <th style="white-space:nowrap;">Série</th>
     <th style="white-space:nowrap;">Responsável</th>
     <th style="white-space:nowrap;">Emitido por</th>
@@ -276,11 +281,16 @@ foreach ($iterator as $row) {
     $nomeCompleto = htmlspecialchars(trim($row['firstname'] . ' ' . $row['realname']) ?: $row['username']);
     $assinado     = $row['date_signed']   ? date('d/m/Y H:i', strtotime($row['date_signed']))   : '-';
     $criado       = $row['date_creation'] ? date('d/m/Y H:i', strtotime($row['date_creation'])) : '-';
+    $isPhone      = ($row['item_type'] ?? 'Computer') === 'Phone';
+    $equipNome    = $isPhone ? ($row['phone_name']   ?? '-') : ($row['computer_name']   ?? '-');
+    $equipSerial  = $isPhone ? ($row['phone_serial'] ?? '-') : ($row['computer_serial'] ?? '-');
+    $tipoLabel    = $isPhone ? '📱 Celular' : '💻 Computador';
 
     echo '<tr style="background:#fff;">';
     echo '<td style="white-space:nowrap;">' . (int)$row['id'] . '</td>';
-    echo '<td style="white-space:nowrap;">' . htmlspecialchars($row['computer_name'] ?? '-') . '</td>';
-    echo '<td style="white-space:nowrap;">' . htmlspecialchars($row['serial'] ?? '-') . '</td>';
+    echo '<td style="white-space:nowrap; font-size:.85em;">' . $tipoLabel . '</td>';
+    echo '<td style="white-space:nowrap;">' . htmlspecialchars($equipNome) . '</td>';
+    echo '<td style="white-space:nowrap;">' . htmlspecialchars($equipSerial) . '</td>';
     echo '<td style="white-space:nowrap;">' . $nomeCompleto . '</td>';
     $issuerNome = htmlspecialchars(trim(($row['issuer_firstname'] ?? '') . ' ' . ($row['issuer_realname'] ?? '')) ?: ($row['issuer_username'] ?? '-'));
     echo '<td style="white-space:nowrap;">' . $issuerNome . '</td>';

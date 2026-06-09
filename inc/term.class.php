@@ -57,22 +57,121 @@ class PluginTermosTerm extends CommonDBTM {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Consulta — Celular
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public static function getPhoneWithUser(int $phones_id, int $lines_id = 0): array {
+        global $DB;
+
+        $iterator = $DB->request([
+            'SELECT' => [
+                'glpi_phones.id                AS computer_id',   // chave genérica
+                'glpi_phones.name              AS computer_name',  // chave genérica
+                'glpi_phones.serial            AS serial',
+                'glpi_phones.otherserial       AS patrimonio',
+                'glpi_phones.users_id          AS _phones_users_id',
+                'glpi_users.id                 AS user_id',
+                'glpi_users.name               AS username',
+                'glpi_users.realname           AS realname',
+                'glpi_users.firstname          AS firstname',
+                'glpi_users.phone              AS phone',
+                'glpi_users.registration_number AS registration_number',
+                'glpi_entities.completename    AS entity',
+                'glpi_usertitles.name          AS title',
+                'glpi_usercategories.name      AS category',
+                'glpi_phonemodels.name         AS model',
+                'glpi_manufacturers.name       AS manufacturer',
+            ],
+            'FROM'      => 'glpi_phones',
+            'LEFT JOIN' => [
+                'glpi_users'          => ['ON' => ['glpi_phones' => 'users_id',           'glpi_users'          => 'id']],
+                'glpi_entities'       => ['ON' => ['glpi_phones' => 'entities_id',         'glpi_entities'       => 'id']],
+                'glpi_usertitles'     => ['ON' => ['glpi_users'  => 'usertitles_id',       'glpi_usertitles'     => 'id']],
+                'glpi_usercategories' => ['ON' => ['glpi_users'  => 'usercategories_id',   'glpi_usercategories' => 'id']],
+                'glpi_phonemodels'    => ['ON' => ['glpi_phones' => 'phonemodels_id',      'glpi_phonemodels'    => 'id']],
+                'glpi_manufacturers'  => ['ON' => ['glpi_phones' => 'manufacturers_id',    'glpi_manufacturers'  => 'id']],
+            ],
+            'WHERE' => ['glpi_phones.id' => $phones_id, 'glpi_phones.is_deleted' => 0],
+            'LIMIT' => 1,
+        ]);
+
+        $row = [];
+        foreach ($iterator as $r) { $row = $r; break; }
+
+        if (empty($row)) return [];
+
+        // Linha telefônica (opcional)
+        $row['line_number'] = '-';
+        $row['line_name']   = '-';
+        if ($lines_id > 0) {
+            $lineIt = $DB->request([
+                'SELECT' => ['name', 'caller_num'],
+                'FROM'   => 'glpi_lines',
+                'WHERE'  => ['id' => $lines_id, 'is_deleted' => 0],
+                'LIMIT'  => 1,
+            ]);
+            foreach ($lineIt as $lr) {
+                $row['line_number'] = $lr['caller_num'] ?? $lr['name'] ?? '-';
+                $row['line_name']   = $lr['name'] ?? '-';
+            }
+        }
+
+        $row['item_type'] = 'Phone';
+        $row['phones_id'] = $phones_id;
+        $row['lines_id']  = $lines_id;
+
+        return $row;
+    }
+
+    /**
+     * Retorna dados do equipamento e usuário de um termo,
+     * independente de ser Computador ou Celular.
+     */
+    public static function getItemWithUser(self $term): array {
+        $itemType = $term->fields['item_type'] ?? 'Computer';
+        if ($itemType === 'Phone') {
+            return self::getPhoneWithUser(
+                (int)$term->fields['phones_id'],
+                (int)($term->fields['lines_id'] ?? 0)
+            );
+        }
+        return self::getComputerWithUser((int)$term->fields['computers_id']);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Criação
     // ─────────────────────────────────────────────────────────────────────────
 
-    public static function createTerm(int $computers_id): int {
-        $data = self::getComputerWithUser($computers_id);
-
-        if (empty($data)) {
-            throw new \RuntimeException('Computador não encontrado.');
-        }
-        if (empty($data['user_id'])) {
-            throw new \RuntimeException('Este computador não possui usuário vinculado.');
+    public static function createTerm(
+        int    $computers_id,
+        string $item_type  = 'Computer',
+        int    $phones_id  = 0,
+        int    $lines_id   = 0
+    ): int {
+        if ($item_type === 'Phone') {
+            $data = self::getPhoneWithUser($phones_id, $lines_id);
+            if (empty($data)) {
+                throw new \RuntimeException('Celular não encontrado.');
+            }
+            if (empty($data['user_id'])) {
+                throw new \RuntimeException('Este celular não possui usuário vinculado.');
+            }
+        } else {
+            $data = self::getComputerWithUser($computers_id);
+            if (empty($data)) {
+                throw new \RuntimeException('Computador não encontrado.');
+            }
+            if (empty($data['user_id'])) {
+                throw new \RuntimeException('Este computador não possui usuário vinculado.');
+            }
         }
 
         $term = new self();
         $id   = $term->add([
-            'computers_id'  => $computers_id,
+            'computers_id'  => $item_type === 'Computer' ? $computers_id : 0,
+            'phones_id'     => $item_type === 'Phone'    ? $phones_id    : 0,
+            'lines_id'      => $lines_id,
+            'item_type'     => $item_type,
             'users_id'      => (int)$data['user_id'],
             'entities_id'   => (int)($_SESSION['glpiactive_entity'] ?? 0),
             'issuer_id'     => (int)($_SESSION['glpiID'] ?? 0),
@@ -100,7 +199,7 @@ class PluginTermosTerm extends CommonDBTM {
             throw new \RuntimeException('Este termo já foi assinado.');
         }
 
-        $data    = self::getComputerWithUser((int)$term->fields['computers_id']);
+        $data    = self::getItemWithUser($term);
         $pdfGen  = new PluginTermosPdf();
         $pdfPath = $pdfGen->generate($data, $signature_base64, $terms_id, (int)($term->fields['issuer_id'] ?? 0));
 
@@ -216,7 +315,7 @@ class PluginTermosTerm extends CommonDBTM {
             throw new \RuntimeException('O usuário não possui e-mail cadastrado no GLPI. Informe um e-mail manualmente.');
         }
 
-        $data         = self::getComputerWithUser((int)$term->fields['computers_id']);
+        $data         = self::getItemWithUser($term);
         $nomeCompleto = trim(($data['firstname'] ?? '') . ' ' . ($data['realname'] ?? '')) ?: ($data['username'] ?? '');
 
         // Monta a URL pública de assinatura
@@ -362,7 +461,7 @@ class PluginTermosTerm extends CommonDBTM {
             throw new \RuntimeException('O usuário não possui e-mail cadastrado no GLPI.');
         }
 
-        $data         = self::getComputerWithUser((int)$term->fields['computers_id']);
+        $data         = self::getItemWithUser($term);
         $nomeCompleto = trim(($data['firstname'] ?? '') . ' ' . ($data['realname'] ?? '')) ?: ($data['username'] ?? '');
         $dataAssinado = date('d/m/Y \a\s H:i', strtotime($term->fields['date_signed']));
 
